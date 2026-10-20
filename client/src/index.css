@@ -1,0 +1,114 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+@layer base {
+  :root {
+    --background: 220 20% 97%;
+    --foreground: 220 40% 13%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 220 40% 13%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 40% 13%;
+
+    --primary: 220 100% 33%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 20% 94%;
+    --secondary-foreground: 220 40% 13%;
+
+    --muted: 220 15% 92%;
+    --muted-foreground: 220 12% 46%;
+
+    --accent: 48 100% 50%;
+    --accent-foreground: 220 40% 13%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 18% 87%;
+    --input: 220 18% 87%;
+    --ring: 220 100% 33%;
+
+    --radius: 0.625rem;
+
+    --sidebar-background: 220 50% 15%;
+    --sidebar-foreground: 220 15% 85%;
+    --sidebar-primary: 48 100% 50%;
+    --sidebar-primary-foreground: 220 40% 13%;
+    --sidebar-accent: 220 40% 22%;
+    --sidebar-accent-foreground: 220 15% 85%;
+    --sidebar-border: 220 35% 22%;
+    --sidebar-ring: 48 100% 50%;
+
+    --navy: 220 50% 15%;
+    --navy-light: 220 40% 22%;
+    --teal: 220 100% 33%;
+    --teal-light: 220 80% 93%;
+    --amber: 48 100% 50%;
+    --amber-light: 48 100% 92%;
+    --success: 152 60% 40%;
+    --success-light: 152 50% 92%;
+    --info: 220 80% 55%;
+    --info-light: 220 60% 93%;
+  }
+
+  .dark {
+    --background: 220 45% 7%;
+    --foreground: 220 15% 90%;
+    --card: 220 45% 12%;
+    --card-foreground: 220 15% 90%;
+    --popover: 220 45% 12%;
+    --popover-foreground: 220 15% 90%;
+    --primary: 48 100% 50%;
+    --primary-foreground: 220 40% 13%;
+    --secondary: 220 35% 18%;
+    --secondary-foreground: 220 15% 85%;
+    --muted: 220 35% 18%;
+    --muted-foreground: 220 12% 55%;
+    --accent: 220 100% 40%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 220 30% 20%;
+    --input: 220 30% 20%;
+    --ring: 48 100% 50%;
+    --sidebar-background: 220 45% 7%;
+    --sidebar-foreground: 220 15% 85%;
+    --sidebar-primary: 48 100% 50%;
+    --sidebar-primary-foreground: 220 40% 13%;
+    --sidebar-accent: 220 35% 14%;
+    --sidebar-accent-foreground: 220 15% 85%;
+    --sidebar-border: 220 30% 15%;
+    --sidebar-ring: 48 100% 50%;
+  }
+}
+
+@layer base {
+  body {
+    font-family: "Roboto", sans-serif;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: "Roboto", sans-serif;
+  }
+}
+.glass-card {
+  @apply bg-card border border-border shadow-sm;
+}
+
+@layer utilities {
+}
