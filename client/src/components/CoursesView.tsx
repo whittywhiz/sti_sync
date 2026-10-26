@@ -247,7 +247,7 @@ function CourseForm({
           {placements.map((pl, i) => (
             <div
               key={i}
-              className="grid grid-cols-[1fr_130px_150px_auto] gap-2 items-center"
+              className="grid grid-cols-[1fr_130px_150px_120px_auto] gap-2 items-center"
             >
               <Select
                 value={String(pl.program_id)}
@@ -294,6 +294,22 @@ function CourseForm({
                       {t}
                     </SelectItem>
                   ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={pl.subject_type ?? "Major"}
+                onValueChange={(v) =>
+                  updatePlacement(i, {
+                    subject_type: v as "Major" | "Minor",
+                  })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Subject Type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Major">Major</SelectItem>
+                  <SelectItem value="Minor">Minor</SelectItem>
                 </SelectContent>
               </Select>
               <Button
@@ -424,6 +440,13 @@ export function CoursesView() {
   const [assignedCodes, setAssignedCodes] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<string[]>([]);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const keyOf = (progId: number, code: string) => `${progId}|${code}`;
+  const codeOf = (key: string) => key.slice(key.indexOf("|") + 1);
+
+  const selectedCodes = useMemo(
+    () => Array.from(new Set(selected.map(codeOf))),
+    [selected],
+  );
 
   const fetchAll = async () => {
     setLoading(true);
@@ -493,7 +516,16 @@ export function CoursesView() {
     const bad = results.find((r) => !r.ok);
     if (bad) {
       const data = await bad.json().catch(() => ({}));
-      await Promise.all(existing.map(post));
+      await Promise.all(
+        existing.map((c) =>
+          post({
+            year_level: c.year_level,
+            program_id: c.program_id,
+            term: c.term,
+            subject_type: c.subject_type,
+          }),
+        ),
+      );
       throw new Error(data.error ?? "Could not save curriculum placements");
     }
   };
@@ -600,7 +632,7 @@ export function CoursesView() {
         toast.error(data.error ?? "Failed to delete course");
         return;
       }
-      setSelected((s) => s.filter((x) => x !== code));
+      setSelected((s) => s.filter((k) => codeOf(k) !== code));
       fetchAll();
     } catch (err) {
       console.error("Failed to delete course", err);
@@ -608,23 +640,24 @@ export function CoursesView() {
     }
   };
 
-  const toggleSelect = (code: string) =>
+  const toggleSelect = (key: string) =>
     setSelected((s) =>
-      s.includes(code) ? s.filter((x) => x !== code) : [...s, code],
+      s.includes(key) ? s.filter((x) => x !== key) : [...s, key],
     );
 
-  const toggleGroup = (list: Course[]) => {
-    const codes = list.map((c) => c.course_code);
-    const allChecked = codes.every((code) => selected.includes(code));
+  const toggleGroup = (list: Course[], progId: number) => {
+    const keys = list.map((c) => keyOf(progId, c.course_code));
+    const allChecked = keys.every((k) => selected.includes(k));
+
     setSelected((s) =>
       allChecked
-        ? s.filter((x) => !codes.includes(x))
-        : Array.from(new Set([...s, ...codes])),
+        ? s.filter((x) => !keys.includes(x))
+        : Array.from(new Set([...s, ...keys])),
     );
   };
 
   const removeSelected = async () => {
-    const codes = [...selected];
+    const codes = [...selectedCodes];
     const failed: string[] = [];
     let firstError = "";
     for (const code of codes) {
@@ -648,7 +681,7 @@ export function CoursesView() {
         `Could not delete ${failed.join(", ")}${firstError ? `: ${firstError}` : ""}`,
       );
     }
-    setSelected(failed);
+    setSelected((s) => s.filter((k) => failed.includes(codeOf(k))));
     fetchAll();
   };
 
@@ -725,11 +758,22 @@ export function CoursesView() {
     });
   }, [filtered, programs, filterProgram, filterType, curriculums]);
 
+  const allKeys = useMemo(
+    () => [
+      ...grouped.flatMap(([pid, list]) =>
+        list.map((c) => keyOf(pid, c.course_code)),
+      ),
+      ...unplaced.map((c) => keyOf(UNPLACED, c.course_code)),
+    ],
+    [grouped, unplaced],
+  );
+
   const editingCourse = courses.find((c) => c.course_code === editingId);
 
   const renderTable = (list: Course[], progId: number) => {
     const allChecked =
-      list.length > 0 && list.every((c) => selected.includes(c.course_code));
+      list.length > 0 &&
+      list.every((c) => selected.includes(keyOf(progId, c.course_code)));
     return (
       <div className="glass-card rounded-xl overflow-x-auto">
         <table className="w-full text-sm">
@@ -739,7 +783,7 @@ export function CoursesView() {
                 <input
                   type="checkbox"
                   checked={allChecked}
-                  onChange={() => toggleGroup(list)}
+                  onChange={() => toggleGroup(list, progId)}
                   aria-label="Select all courses in this group"
                   className="h-4 w-4 cursor-pointer accent-primary"
                 />
@@ -749,7 +793,21 @@ export function CoursesView() {
               <th className="px-4 py-3 text-left">Type</th>
               <th className="px-4 py-3 text-left">Placement</th>
               <th className="px-4 py-3 text-left">Professor</th>
-              <th className="w-24" />
+              <th className="px-4 py-0 text-right whitespace-nowrap">
+                {list.some((c) =>
+                  selected.includes(keyOf(progId, c.course_code)),
+                ) && (
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    className="h-7 px-2 text-xs"
+                    onClick={() => setBulkDeleteOpen(true)}
+                  >
+                    <Trash2 className="w-3.5 h-3.5 mr-1" />
+                    Delete ({selectedCodes.length})
+                  </Button>
+                )}
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -763,7 +821,9 @@ export function CoursesView() {
                   : placementsOfCourse(c.course_code).filter(
                       (cu) => cu.program_id === progId && matchesType(cu),
                     );
-              const isSelected = selected.includes(c.course_code);
+              const isSelected = selected.includes(
+                keyOf(progId, c.course_code),
+              );
               return (
                 <tr
                   key={`${progId}-${c.course_code}`}
@@ -775,7 +835,9 @@ export function CoursesView() {
                     <input
                       type="checkbox"
                       checked={isSelected}
-                      onChange={() => toggleSelect(c.course_code)}
+                      onChange={() =>
+                        toggleSelect(keyOf(progId, c.course_code))
+                      }
                       aria-label={`Select ${c.course_code}`}
                       className="h-4 w-4 cursor-pointer accent-primary"
                     />
@@ -807,19 +869,6 @@ export function CoursesView() {
                                 ? ` · ${cu.term.replace(" Semester", " Sem")}`
                                 : ""}
                             </span>
-                            <select
-                              value={cu.subject_type ?? "Major"}
-                              onChange={(e) =>
-                                changeSubjectType(
-                                  cu.curriculum_id,
-                                  e.target.value,
-                                )
-                              }
-                              className="text-xs border rounded px-1 py-0.5 bg-background"
-                            >
-                              <option value="Major">Major</option>
-                              <option value="Minor">Minor</option>
-                            </select>
                           </span>
                         ))}
                       </div>
@@ -931,36 +980,6 @@ export function CoursesView() {
             </SelectContent>
           </Select>
         </div>
-
-        {selected.length > 0 && (
-          <div className="glass-card rounded-xl mt-3 px-4 py-2 flex items-center justify-between text-sm">
-            <span className="font-medium">{selected.length} selected</span>
-            <div className="flex gap-2">
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() =>
-                  setSelected([
-                    ...filtered.map((c) => c.course_code),
-                    ...unplaced.map((c) => c.course_code),
-                  ])
-                }
-              >
-                Select all ({filtered.length + unplaced.length})
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => setSelected([])}>
-                Clear
-              </Button>
-              <Button
-                size="sm"
-                variant="destructive"
-                onClick={() => setBulkDeleteOpen(true)}
-              >
-                <Trash2 className="w-4 h-4 mr-1" /> Delete selected
-              </Button>
-            </div>
-          </div>
-        )}
       </div>
 
       {!loading && filtered.length === 0 && unplaced.length === 0 ? (
@@ -1070,8 +1089,8 @@ export function CoursesView() {
 
       <ConfirmDeleteDialog
         open={bulkDeleteOpen}
-        title={`Delete ${selected.length} selected course${selected.length !== 1 ? "s" : ""}?`}
-        description="This also removes their curriculum placements. Courses used by scheduled classes can't be deleted and will stay selected."
+        title={`Delete ${selectedCodes.length} selected course${selectedCodes.length !== 1 ? "s" : ""}?`}
+        description="Courses are shared across programs, so deleting a course removes it from every program it's placed in. Courses used by scheduled classes can't be deleted and will stay selected."
         onConfirm={() => {
           setBulkDeleteOpen(false);
           removeSelected();

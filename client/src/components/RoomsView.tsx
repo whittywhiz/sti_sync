@@ -306,31 +306,6 @@ export function RoomsView() {
             <option value="PE">PE</option>
           </select>
         </div>
-
-        {selected.length > 0 && (
-          <div className="glass-card rounded-xl mt-3 px-4 py-2 flex items-center justify-between text-sm">
-            <span className="font-medium">{selected.length} selected</span>
-            <div className="flex gap-2">
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => setSelected(sorted.map((r) => r.room_id))}
-              >
-                Select all ({sorted.length})
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => setSelected([])}>
-                Clear
-              </Button>
-              <Button
-                size="sm"
-                variant="destructive"
-                onClick={() => setBulkDeleteOpen(true)}
-              >
-                <Trash2 className="w-4 h-4 mr-1" /> Delete selected
-              </Button>
-            </div>
-          </div>
-        )}
       </div>
 
       {!loading && filtered.length === 0 && (
@@ -369,7 +344,19 @@ export function RoomsView() {
                 <th className="px-4 py-3 text-left">Room</th>
                 <th className="px-4 py-3 text-left">Capacity</th>
                 <th className="px-4 py-3 text-left">Type</th>
-                <th className="w-24" />
+                <th className="px-4 py-0 text-right whitespace-nowrap">
+                  {selected.length > 0 && (
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      className="h-7 px-2 text-xs"
+                      onClick={() => setBulkDeleteOpen(true)}
+                    >
+                      <Trash2 className="w-3.5 h-3.5 mr-1" /> Delete (
+                      {selected.length})
+                    </Button>
+                  )}
+                </th>
               </tr>
             </thead>
             <tbody>
