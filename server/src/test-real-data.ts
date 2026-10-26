@@ -6,7 +6,7 @@ import { pool } from "./db";
 
 async function main() {
   console.log("Fetching real data from database...");
-  const input = await buildSchedulingInputFromDB(5);
+  const input = await buildSchedulingInputFromDB(9);
 
   console.log("\n===== Data pulled from DB =====");
   console.log(`Rooms: ${input.rooms.length}`);

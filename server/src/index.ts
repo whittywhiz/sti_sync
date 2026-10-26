@@ -1,5 +1,6 @@
-import express, { Request, Response } from "express";
+import express, { Request, Response, NextFunction } from "express";
 import cors from "cors";
+import jwt from "jsonwebtoken";
 import { pool } from "./db";
 import { buildSchedulingInputFromDB } from "./scheduling-data";
 import { buildRequirements } from "./ga";
@@ -13,6 +14,41 @@ import type { PoolClient } from "pg";
 import { cacheMiddleware, clearCache } from "./cache";
 
 dotenv.config();
+
+export const JWT_SECRET =
+  (process.env as any).JWT_SECRET || "stisync-secure-secret-key-2026";
+
+const PUBLIC_ROUTES = [
+  "/login",
+  "/change-password/request",
+  "/change-password/confirm",
+  "/test-db",
+];
+
+export function authenticateToken(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  if (PUBLIC_ROUTES.includes(req.path)) {
+    return next();
+  }
+
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1];
+
+  if (!token) {
+    return res.status(401).json({ error: "Access token required" });
+  }
+
+  jwt.verify(token, JWT_SECRET, (err: any, decoded: any) => {
+    if (err) {
+      return res.status(401).json({ error: "Invalid or expired token" });
+    }
+    (req as any).user = decoded;
+    next();
+  });
+}
 
 const upload = multer({ storage: multer.memoryStorage() });
 const YEAR_LEVELS = ["1st Year", "2nd Year", "3rd Year", "4th Year"];
@@ -40,9 +76,16 @@ const PORT = (process.env as any).PORT || 3000;
 
 const app = express();
 
-app.use(cors());
+app.use(
+  cors({
+    origin: ["http://localhost:8080", "http://127.0.0.1:8080"],
+    credentials: true,
+  }),
+);
 
 app.use(express.json());
+
+app.use(authenticateToken);
 
 app.use(cacheMiddleware);
 
@@ -297,7 +340,10 @@ app.post("/courses/import", upload.single("file"), async (req, res) => {
   }
 
   const courseTypeResult = await pool.query(
-    "SELECT course_type_id, course_type_description FROM course_type",
+    `SELECT DISTINCT ON (course_type_description)
+            course_type_id, course_type_description
+     FROM course_type
+     ORDER BY course_type_description, total_hours DESC`,
   );
   const courseTypeMap = new Map<string, number>(
     courseTypeResult.rows.map((r: any) => [
@@ -484,7 +530,8 @@ app.post("/login", async (req, res) => {
         .json({ success: false, error: "Invalid password" });
     }
 
-    return res.json({ success: true, token: "logged-in-" + Date.now() });
+    const token = jwt.sign({ role: "admin" }, JWT_SECRET, { expiresIn: "12h" });
+    return res.json({ success: true, token });
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, error: "Server error" });
@@ -998,7 +1045,7 @@ app.post("/programs", async (req: Request, res: Response) => {
     if (err.code === "23505") {
       return res.status(409).json({
         success: false,
-        error: "A program with this name already exists.",
+        error: "A program with this name or code already exists.",
       });
     }
     console.error(err);
@@ -1330,7 +1377,7 @@ app.put("/programs/:id", async (req: Request, res: Response) => {
     if (err.code === "23505") {
       return res.status(409).json({
         success: false,
-        error: "A program with this name already exists.",
+        error: "A program with this name or code already exists.",
       });
     }
     console.error(err);
@@ -1860,6 +1907,41 @@ app.post("/generate-schedule", async (req: Request, res: Response) => {
     }
 
     await client.query("COMMIT");
+    const roomById = new Map(input.rooms.map((r) => [r.room_id, r]));
+    const studentsBySection = new Map(
+      input.sections.map((s) => [s.section_id, s.number_of_students]),
+    );
+    const over = new Map<string, { section_id: number; room_id: number }>();
+    for (const a of gaResult.best.assignments) {
+      const room = roomById.get(a.room_id);
+      const n = studentsBySection.get(a.section_id) ?? 0;
+      if (room && n > room.capacity) {
+        over.set(`${a.section_id}-${a.room_id}`, {
+          section_id: a.section_id,
+          room_id: a.room_id,
+        });
+      }
+    }
+    let capacityWarnings: string[] = [];
+    if (over.size > 0) {
+      const ids = [...new Set([...over.values()].map((o) => o.section_id))];
+      const labelRows = await pool.query(
+        `SELECT sec.section_id, p.code, sec.year_level, sec.section_name
+         FROM section sec JOIN program p ON p.program_id = sec.program_id
+         WHERE sec.section_id = ANY($1::int[])`,
+        [ids],
+      );
+      const labelById = new Map<number, string>(
+        labelRows.rows.map((r: any) => [
+          r.section_id,
+          `${r.code} ${r.year_level}${r.section_name ? " " + r.section_name : ""}`,
+        ]),
+      );
+      capacityWarnings = [...over.values()].map((o) => {
+        const room = roomById.get(o.room_id)!;
+        return `${labelById.get(o.section_id) ?? "Section " + o.section_id} (${studentsBySection.get(o.section_id)} students) is in ${room.room_number} (capacity ${room.capacity})`;
+      });
+    }
 
     const responsePayload = {
       success: true,
@@ -1868,6 +1950,7 @@ app.post("/generate-schedule", async (req: Request, res: Response) => {
       generationsRun: gaResult.generationsRun,
       classesCreated: insertedClasses.length,
       classes: insertedClasses,
+      capacityWarnings,
     };
     lastGenerateResult = responsePayload;
     res.json(responsePayload);

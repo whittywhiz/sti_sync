@@ -38,8 +38,16 @@ function main() {
     });
     return;
   }
+  const { violations } = scoreCandidate(result.best, schedulingInput);
+  const capacityWarnings = Array.from(
+    new Set(
+      violations
+        .filter((v) => v.type === "ROOM_CAPACITY_EXCEEDED")
+        .map((v) => v.message),
+    ),
+  );
 
-  parentPort?.postMessage({ success: true, result });
+  parentPort?.postMessage({ success: true, result, capacityWarnings });
 }
 
 try {

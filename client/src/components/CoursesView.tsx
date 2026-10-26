@@ -393,7 +393,12 @@ function CourseForm({
         <Button type="submit" size="sm">
           <Check className="w-4 h-4 mr-1" /> Save
         </Button>
-        <Button type="button" size="sm" variant="outline" onClick={onCancel}>
+        <Button
+          size="sm"
+          variant="outline"
+          className="!bg-white hover:!bg-accent"
+          onClick={onCancel}
+        >
           <X className="w-4 h-4 mr-1" /> Cancel
         </Button>
       </div>

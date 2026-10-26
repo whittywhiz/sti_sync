@@ -74,7 +74,12 @@ function ProgForm({
         <Button size="sm" onClick={handleSave}>
           <Check className="w-4 h-4 mr-1" /> Save
         </Button>
-        <Button size="sm" variant="outline" onClick={onCancel}>
+        <Button
+          size="sm"
+          variant="outline"
+          className="!bg-white hover:!bg-accent"
+          onClick={onCancel}
+        >
           <X className="w-4 h-4 mr-1" /> Cancel
         </Button>
       </div>
@@ -118,11 +123,21 @@ export function ProgramsView() {
   }, []);
 
   const handleAdd = async (description: string, code: string) => {
-    const isDuplicate = programs.some(
+    const isDuplicateName = programs.some(
       (p) => p.description.toLowerCase() === description.toLowerCase(),
     );
-    if (isDuplicate) {
+
+    if (isDuplicateName) {
       toast.error("A program with this name already exists.");
+      return;
+    }
+
+    const isDuplicateCode = programs.some(
+      (p) => p.code?.toLowerCase() === code.toLowerCase(),
+    );
+
+    if (isDuplicateCode) {
+      toast.error("A program with this code already exists.");
       return;
     }
     if (!code) {
@@ -150,17 +165,28 @@ export function ProgramsView() {
   };
 
   const handleEdit = async (description: string, code: string) => {
-    if (!editingId) return;
-
-    const isDuplicate = programs.some(
+    const isDuplicateName = programs.some(
       (p) =>
         p.program_id !== editingId &&
         p.description.toLowerCase() === description.toLowerCase(),
     );
-    if (isDuplicate) {
+
+    if (isDuplicateName) {
       toast.error("A program with this name already exists.");
       return;
     }
+
+    const isDuplicateCode = programs.some(
+      (p) =>
+        p.program_id !== editingId &&
+        p.code?.toLowerCase() === code.toLowerCase(),
+    );
+
+    if (isDuplicateCode) {
+      toast.error("A program with this code already exists.");
+      return;
+    }
+
     if (!code) {
       toast.error("Program code is required");
       return;
@@ -284,31 +310,6 @@ export function ProgramsView() {
             />
           </div>
         </div>
-
-        {selected.length > 0 && (
-          <div className="glass-card rounded-xl mt-3 px-4 py-2 flex items-center justify-between text-sm">
-            <span className="font-medium">{selected.length} selected</span>
-            <div className="flex gap-2">
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => setSelected(sorted.map((p) => p.program_id))}
-              >
-                Select all ({sorted.length})
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => setSelected([])}>
-                Clear
-              </Button>
-              <Button
-                size="sm"
-                variant="destructive"
-                onClick={() => setBulkDeleteOpen(true)}
-              >
-                <Trash2 className="w-4 h-4 mr-1" /> Delete selected
-              </Button>
-            </div>
-          </div>
-        )}
       </div>
 
       {!loading && filtered.length === 0 && (
@@ -348,7 +349,19 @@ export function ProgramsView() {
                 <th className="px-4 py-3 text-left">Program</th>
                 <th className="px-4 py-3 text-left">Courses</th>
                 <th className="px-4 py-3 text-left">Sections</th>
-                <th className="w-24" />
+                <th className="px-4 py-0 text-right whitespace-nowrap">
+                  {selected.length > 0 && (
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      className="h-7 px-2 text-xs"
+                      onClick={() => setBulkDeleteOpen(true)}
+                    >
+                      <Trash2 className="w-3.5 h-3.5 mr-1" /> Delete (
+                      {selected.length})
+                    </Button>
+                  )}
+                </th>
               </tr>
             </thead>
             <tbody>

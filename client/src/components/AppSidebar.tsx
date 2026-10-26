@@ -13,6 +13,9 @@ import { useNavigate } from "react-router-dom";
 import { useSchedulingStore } from "@/store/schedulingStore";
 import { cn } from "@/lib/utils";
 import ChangePasswordButton from "@/components/ChangePasswordButton";
+import { useState } from "react";
+import { createPortal } from "react-dom";
+import { Button } from "@/components/ui/button";
 
 const navItems = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -28,6 +31,7 @@ const navItems = [
 export function AppSidebar() {
   const { activeTab, setActiveTab } = useSchedulingStore();
   const navigate = useNavigate();
+  const [confirmLogout, setConfirmLogout] = useState(false);
 
   function handleLogout() {
     localStorage.removeItem("authToken");
@@ -62,13 +66,34 @@ export function AppSidebar() {
       <div className="p-3 border-t border-sidebar-border flex-shrink-0">
         <ChangePasswordButton />
         <button
-          onClick={handleLogout}
+          onClick={() => setConfirmLogout(true)}
           className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-sidebar-foreground/70 transition-all hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
         >
           <LogOut className="w-4 h-4" />
           Logout
         </button>
       </div>
+      {confirmLogout &&
+        createPortal(
+          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40">
+            <div className="w-full max-w-sm space-y-4 rounded-xl bg-white p-6 text-gray-900 shadow-lg">
+              <h3 className="font-heading text-lg font-semibold">Log out?</h3>
+              <p className="text-sm text-gray-600">
+                Are you sure you want to Log out?
+              </p>
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => setConfirmLogout(false)}
+                >
+                  Cancel
+                </Button>
+                <Button onClick={handleLogout}>Log out</Button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
     </aside>
   );
 }

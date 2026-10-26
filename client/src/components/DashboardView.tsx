@@ -290,9 +290,6 @@ export function DashboardView() {
           <h2 className="font-heading text-2xl font-bold text-foreground">
             Dashboard
           </h2>
-          <p className="text-muted-foreground mt-1">
-            Scheduling health overview
-          </p>
         </div>
         <div className="flex items-center gap-2 text-sm text-muted-foreground glass-card rounded-lg px-3 py-2">
           <Clock className="w-4 h-4 text-primary" />

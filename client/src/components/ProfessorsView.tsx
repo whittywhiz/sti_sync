@@ -347,14 +347,18 @@ function ProfessorForm({
         <Button size="sm" onClick={handleSave}>
           <Check className="w-4 h-4 mr-1" /> Save
         </Button>
-        <Button size="sm" variant="outline" onClick={onCancel}>
+        <Button
+          size="sm"
+          variant="outline"
+          className="!bg-white hover:!bg-accent"
+          onClick={onCancel}
+        >
           <X className="w-4 h-4 mr-1" /> Cancel
         </Button>
       </div>
     </div>
   );
 }
-
 export function ProfessorsView() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [availability, setAvailability] = useState<Availability[]>([]);
@@ -366,6 +370,8 @@ export function ProfessorsView() {
   const [deleteTarget, setDeleteTarget] = useState<Employee | null>(null);
   const [selected, setSelected] = useState<number[]>([]);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [deptFilter, setDeptFilter] = useState("");
+  const [deptOptions, setDeptOptions] = useState<string[]>([]);
   const emptyForm: ProfessorFormValues = {
     fname: "",
     mname: "",
@@ -398,6 +404,14 @@ export function ProfessorsView() {
 
   useEffect(() => {
     fetchAll();
+  }, []);
+  useEffect(() => {
+    fetch("/api/departments")
+      .then((r) => r.json())
+      .then((rows: { description: string }[]) =>
+        setDeptOptions(rows.map((d) => d.description)),
+      )
+      .catch(() => {});
   }, []);
 
   const saveAvailabilityForEmployee = async (
@@ -568,7 +582,19 @@ export function ProfessorsView() {
       }));
 
   const dayName = (id: number) => days.find((d) => d.day_id === id)?.name ?? "";
+
+  const isUnassigned = (d: string | null) => !d || d === "Unassigned";
+
+  const hasUnassigned = employees.some((p) => isUnassigned(p.department));
+
+  useEffect(() => {
+    if (deptFilter === "__none__" && !hasUnassigned) setDeptFilter("");
+  }, [hasUnassigned, deptFilter]);
+
   const filtered = employees.filter((p) => {
+    if (deptFilter === "__none__") {
+      if (!isUnassigned(p.department)) return false;
+    } else if (deptFilter && p.department !== deptFilter) return false;
     if (!search) return true;
     const q = search.toLowerCase();
     return (
@@ -577,7 +603,6 @@ export function ProfessorsView() {
       (p.position ?? "").toLowerCase().includes(q)
     );
   });
-
   const sorted = [...filtered].sort((a, b) => a.lname.localeCompare(b.lname));
 
   const editingProf = employees.find((e) => e.employee_id === editingId);
@@ -616,8 +641,8 @@ export function ProfessorsView() {
             </Button>
           </div>
         </div>
-        <div className="glass-card rounded-xl p-4">
-          <div className="relative">
+        <div className="glass-card rounded-xl p-4 flex gap-3">
+          <div className="relative flex-1">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <Input
               placeholder="Search name, department, or position…"
@@ -629,6 +654,19 @@ export function ProfessorsView() {
               className="pl-9"
             />
           </div>
+          <select
+            value={deptFilter}
+            onChange={(e) => setDeptFilter(e.target.value)}
+            className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+          >
+            <option value="">All departments</option>
+            {deptOptions.map((d) => (
+              <option key={d} value={d}>
+                {d}
+              </option>
+            ))}
+            {hasUnassigned && <option value="__none__">Unassigned</option>}
+          </select>
         </div>
 
         {selected.length > 0 && (
@@ -765,7 +803,7 @@ export function ProfessorsView() {
 
       {!loading && sorted.length === 0 && (
         <div className="glass-card rounded-xl p-10 text-center text-sm text-muted-foreground">
-          {search
+          {search || deptFilter
             ? "No professors match your search."
             : "No professors yet. Click Add Professor to create one."}
         </div>

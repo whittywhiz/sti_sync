@@ -19,15 +19,16 @@ const WEIGHTS = {
   HOME_LAB_PREFERENCE_UNMET: 15,
   LAB_PREFERENCE_UNMET: 15,
   LONG_VACANT_GAP_PER_30MIN: 5,
+  SAME_COURSE_SAME_DAY: 100,
 };
 const HARD_VIOLATION_TYPES = new Set<ConstraintViolation["type"]>([
   "ROOM_CONFLICT",
   "EMPLOYEE_CONFLICT",
   "SECTION_CONFLICT",
-  "ROOM_CAPACITY_EXCEEDED",
   "EMPLOYEE_UNAVAILABLE",
   "ROOM_TYPE_MISMATCH",
   "EMPLOYEE_MAX_HOURS_EXCEEDED",
+  "SAME_COURSE_SAME_DAY",
 ]);
 
 export function hasHardViolations(violations: ConstraintViolation[]): boolean {
@@ -125,12 +126,12 @@ export function evaluateFitness(
   for (const assignment of assignments) {
     const room = roomMap.get(assignment.room_id);
     const section = sectionMap.get(assignment.section_id);
-
     if (room && section && section.number_of_students > room.capacity) {
+      const overflow = section.number_of_students - room.capacity;
       violations.push({
         type: "ROOM_CAPACITY_EXCEEDED",
         message: `Section ${assignment.section_id} (${section.number_of_students} students) exceeds Room ${room.room_number} capacity (${room.capacity})`,
-        weight: WEIGHTS.ROOM_CAPACITY_EXCEEDED,
+        weight: WEIGHTS.ROOM_CAPACITY_EXCEEDED + overflow * 2,
       });
     }
 
@@ -138,8 +139,11 @@ export function evaluateFitness(
     if (room && course && room.type) {
       const courseType = course.course_type_description.toLowerCase();
       const roomType = room.type.toLowerCase();
-
-      if (courseType !== roomType) {
+      const isLabSession2InLectureRoom =
+        courseType === "laboratory" &&
+        assignment.session_number === 2 &&
+        roomType === "lecture";
+      if (courseType !== roomType && !isLabSession2InLectureRoom) {
         violations.push({
           type: "ROOM_TYPE_MISMATCH",
           message: `Course ${assignment.course_code} (${course.course_type_description}) assigned to Room ${room.room_number} (${room.type})`,
@@ -279,8 +283,22 @@ export function evaluateFitness(
       }
     }
   }
+  const sessionDayKey = new Map<string, number>();
+  for (const a of assignments) {
+    const key = `${a.section_id}-${a.course_code}`;
+    const prev = sessionDayKey.get(key);
+    if (prev === undefined) {
+      sessionDayKey.set(key, a.day_id);
+    } else if (prev !== a.day_id) {
+    } else {
+      violations.push({
+        type: "SAME_COURSE_SAME_DAY",
+        message: `Section ${a.section_id}: both sessions of ${a.course_code} are on day ${a.day_id}`,
+        weight: WEIGHTS.SAME_COURSE_SAME_DAY,
+      });
+    }
+  }
   const fitness = violations.reduce((sum, v) => sum + v.weight, 0);
-
   return { fitness, violations };
 }
 

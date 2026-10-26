@@ -6,6 +6,7 @@ export interface GAWorkerResult {
   best: Candidate;
   generationsRun: number;
   fitnessHistory: number[];
+  capacityWarnings: string[];
 }
 
 export function runGAInWorker(
@@ -18,9 +19,13 @@ export function runGAInWorker(
       workerData: { schedulingInput, populationSize, maxGenerations },
       execArgv: ["-r", "ts-node/register"],
     });
+
     worker.on("message", (message) => {
       if (message.success) {
-        resolve(message.result);
+        resolve({
+          ...message.result,
+          capacityWarnings: message.capacityWarnings ?? [],
+        });
       } else {
         reject(new Error(message.error));
       }

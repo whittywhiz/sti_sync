@@ -14,7 +14,9 @@ export async function buildSchedulingInputFromDB(
     availabilityResult,
     daysResult,
   ] = await Promise.all([
-    pool.query("SELECT room_id, room_number, capacity, type FROM room"),
+    pool.query(
+      "SELECT room_id, room_number, capacity, type, program_id FROM room",
+    ),
     pool.query(
       "SELECT employee_id, department, name, max_hours_per_day, max_hours_per_week FROM employee",
     ),

@@ -2,6 +2,13 @@ import { useState, useEffect } from "react";
 import { Plus, Trash2, Pencil, Check, X, Search, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { motion, AnimatePresence } from "framer-motion";
 import { ConfirmDeleteDialog } from "@/components/ConfirmDeleteDialog";
 import { Modal } from "@/components/Modal";
@@ -88,7 +95,12 @@ function RoomForm({ initial, onSave, onCancel, stacked }: RoomFormProps) {
         <Button size="sm" onClick={handleSave}>
           <Check className="w-4 h-4 mr-1" /> Save
         </Button>
-        <Button size="sm" variant="outline" onClick={onCancel}>
+        <Button
+          size="sm"
+          variant="outline"
+          className="!bg-white hover:!bg-accent"
+          onClick={onCancel}
+        >
           <X className="w-4 h-4 mr-1" /> Cancel
         </Button>
       </div>
@@ -106,6 +118,7 @@ export function RoomsView() {
   const [deleteTarget, setDeleteTarget] = useState<Room | null>(null);
   const [selected, setSelected] = useState<number[]>([]);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [typeFilter, setTypeFilter] = useState("");
 
   const emptyRoom: RoomFormValues = {
     room_number: "",
@@ -235,6 +248,7 @@ export function RoomsView() {
   };
 
   const filtered = rooms.filter((r) => {
+    if (typeFilter && r.type !== typeFilter) return false;
     if (!search) return true;
     const q = search.toLowerCase();
     return (
@@ -242,7 +256,6 @@ export function RoomsView() {
       r.type.toLowerCase().includes(q)
     );
   });
-
   const sorted = [...filtered].sort((a, b) =>
     a.room_number.localeCompare(b.room_number, undefined, { numeric: true }),
   );
@@ -269,8 +282,8 @@ export function RoomsView() {
           </Button>
         </div>
 
-        <div className="glass-card rounded-xl p-4">
-          <div className="relative">
+        <div className="glass-card rounded-xl p-4 flex gap-3">
+          <div className="relative flex-1">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <Input
               placeholder="Search room number or type…"
@@ -282,6 +295,16 @@ export function RoomsView() {
               className="pl-9"
             />
           </div>
+          <select
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value)}
+            className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+          >
+            <option value="">All types</option>
+            <option value="Lecture">Lecture</option>
+            <option value="Laboratory">Laboratory</option>
+            <option value="PE">PE</option>
+          </select>
         </div>
 
         {selected.length > 0 && (

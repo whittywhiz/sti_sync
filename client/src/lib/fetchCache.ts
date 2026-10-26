@@ -15,13 +15,26 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
 
   if (!url.startsWith("/api/")) return realFetch(input, init);
 
+  const token = localStorage.getItem("authToken");
+  const headers = new Headers(
+    init?.headers ?? (input instanceof Request ? input.headers : undefined),
+  );
+  if (token && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  const authInit: RequestInit = { ...init, headers };
+
   if (method !== "GET") {
-    const res = await realFetch(input, init);
+    const res = await realFetch(input, authInit);
+    if (res.status === 401 && !url.includes("/login")) {
+      localStorage.removeItem("authToken");
+      window.location.href = "/login";
+    }
     cache.clear();
     return res;
   }
 
-  if (url.includes("/generate-schedule/status")) return realFetch(input, init);
+  if (url.includes("/generate-schedule/status")) return realFetch(input, authInit);
 
   const hit = cache.get(url);
   if (hit && Date.now() - hit.time < TTL) {
@@ -31,7 +44,12 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     });
   }
 
-  const res = await realFetch(input, init);
+  const res = await realFetch(input, authInit);
+  if (res.status === 401 && !url.includes("/login")) {
+    localStorage.removeItem("authToken");
+    window.location.href = "/login";
+    return res;
+  }
   if (res.ok)
     cache.set(url, { body: await res.clone().text(), time: Date.now() });
   return res;

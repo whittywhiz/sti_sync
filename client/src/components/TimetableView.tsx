@@ -12,6 +12,7 @@ import {
   History as HistoryIcon,
   X,
   Loader2,
+  ChevronDown,
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -387,6 +388,79 @@ const DAY_ABBR: Record<string, string> = {
   Friday: "Fri",
   Saturday: "Sat",
 };
+
+function SearchSelect({
+  options,
+  value,
+  onChange,
+}: {
+  options: string[];
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const shown = options.filter((o) =>
+    o.toLowerCase().includes(query.toLowerCase()),
+  );
+
+  return (
+    <div className="relative w-full">
+      <button
+        type="button"
+        onClick={() => {
+          setQuery("");
+          setOpen((o) => !o);
+        }}
+        className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 text-sm"
+      >
+        <span className="truncate">{value}</span>
+        <ChevronDown className="ml-2 h-4 w-4 shrink-0 text-muted-foreground" />
+      </button>
+
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 z-50 mt-1 w-full rounded-md border bg-white shadow-lg">
+            <div className="border-b p-2">
+              <input
+                autoFocus
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search…"
+                className="h-8 w-full rounded-md border border-input px-2 text-sm"
+              />
+            </div>
+            <div className="max-h-60 overflow-y-auto">
+              {shown.map((o) => (
+                <button
+                  key={o}
+                  type="button"
+                  onClick={() => {
+                    onChange(o);
+                    setOpen(false);
+                  }}
+                  className={`block w-full px-3 py-2 text-left text-sm ${
+                    o === value
+                      ? "bg-yellow-400 font-semibold text-black"
+                      : "hover:bg-yellow-100"
+                  }`}
+                >
+                  {o}
+                </button>
+              ))}
+              {shown.length === 0 && (
+                <p className="px-3 py-2 text-sm text-muted-foreground">
+                  No matches
+                </p>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 export function TimetableView() {
   const [classes, setClasses] = useState<ClassRow[]>([]);
@@ -775,11 +849,11 @@ export function TimetableView() {
     exportPdf(filteredClasses, `sti-sync-timetable-${Date.now()}`);
   const historyDialog = historyOpen && (
     <div
-      className="fixed inset-0 z-[200] flex items-center justify-center  p-4"
+      className="fixed inset-0 z-[200] flex items-center justify-center p-4"
       onClick={() => setHistoryOpen(false)}
     >
       <div
-        className="bg-white rounded-xl shadow-2xl w-full max-w-2xl p-6"
+        className="bg-white rounded-xl shadow-2xl w-full max-w-2xl p-6 max-h-[85vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-4">
@@ -793,56 +867,57 @@ export function TimetableView() {
             <X className="w-3.5 h-3.5" />
           </Button>
         </div>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b text-left text-xs uppercase text-muted-foreground">
-              <th className="py-2">Year</th>
-              <th>Semester</th>
-              <th>Export</th>
-            </tr>
-          </thead>
-          <tbody>
-            {history.map((h) => (
-              <tr key={h.schedule_id} className="border-b last:border-0">
-                <td className="py-2">{h.year}</td>
-                <td>
-                  {h.term}
-                  {h.status === "active" ? " (current)" : ""}
-                </td>
-                <td className="py-2">
-                  <div className="flex gap-1.5">
-                    {(["pdf", "xls", "xlsx"] as const).map((k) => (
-                      <Button
-                        key={k}
-                        variant="outline"
-                        size="sm"
-                        className="text-xs h-7"
-                        disabled={exportingId === h.schedule_id}
-                        onClick={() => exportHistory(h, k)}
-                      >
-                        {k === "pdf" ? "PDF" : k === "xls" ? "Excel" : "XLSX"}
-                      </Button>
-                    ))}
-                  </div>
-                </td>
+        <div className="overflow-y-auto min-h-0">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-white">
+              <tr className="border-b text-left text-xs uppercase text-muted-foreground">
+                <th className="py-2">Year</th>
+                <th>Semester</th>
+                <th>Export</th>
               </tr>
-            ))}
-            {history.length === 0 && (
-              <tr>
-                <td
-                  colSpan={3}
-                  className="py-6 text-center text-muted-foreground"
-                >
-                  No generated timetables yet.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {history.map((h) => (
+                <tr key={h.schedule_id} className="border-b last:border-0">
+                  <td className="py-2">{h.year}</td>
+                  <td>
+                    {h.term}
+                    {h.status === "active" ? " (current)" : ""}
+                  </td>
+                  <td className="py-2">
+                    <div className="flex gap-1.5">
+                      {(["pdf", "xls", "xlsx"] as const).map((k) => (
+                        <Button
+                          key={k}
+                          variant="outline"
+                          size="sm"
+                          className="text-xs h-7"
+                          disabled={exportingId === h.schedule_id}
+                          onClick={() => exportHistory(h, k)}
+                        >
+                          {k === "pdf" ? "PDF" : k === "xls" ? "Excel" : "XLSX"}
+                        </Button>
+                      ))}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {history.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={3}
+                    className="py-6 text-center text-muted-foreground"
+                  >
+                    No generated timetables yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
-
   if (loading) {
     return (
       <div className="space-y-6">
@@ -872,7 +947,7 @@ export function TimetableView() {
           <Button
             variant="outline"
             size="sm"
-            className="text-xs gap-1.5"
+            className="text-xs gap-1.5 !bg-white hover:!bg-accent"
             onClick={openHistory}
           >
             <HistoryIcon className="w-3.5 h-3.5" />
@@ -907,7 +982,7 @@ export function TimetableView() {
           <Button
             variant="outline"
             size="sm"
-            className="text-xs gap-1.5"
+            className="text-xs gap-1.5 !bg-white hover:!bg-accent"
             onClick={openHistory}
           >
             <HistoryIcon className="w-3.5 h-3.5" />
@@ -916,7 +991,7 @@ export function TimetableView() {
           <Button
             variant="outline"
             size="sm"
-            className="text-xs gap-1.5"
+            className="text-xs gap-1.5 !bg-white hover:!bg-accent"
             onClick={handleExportPdf}
           >
             <FileDown className="w-3.5 h-3.5" />
@@ -925,7 +1000,7 @@ export function TimetableView() {
           <Button
             variant="outline"
             size="sm"
-            className="text-xs gap-1.5"
+            className="text-xs gap-1.5 !bg-white hover:!bg-accent"
             onClick={() => handleExportSheet("xlsx")}
           >
             <FileSpreadsheet className="w-3.5 h-3.5" />
@@ -934,7 +1009,7 @@ export function TimetableView() {
           <Button
             variant="outline"
             size="sm"
-            className="text-xs gap-1.5"
+            className="text-xs gap-1.5 !bg-white hover:!bg-accent"
             onClick={() => handleExportSheet("csv")}
           >
             <FileSpreadsheet className="w-3.5 h-3.5" />
@@ -953,7 +1028,7 @@ export function TimetableView() {
           <Filter className="w-4 h-4 text-muted-foreground" />
           <span className="text-sm font-semibold">Filter View</span>
         </div>
-        <div className="flex gap-2 flex-wrap">
+        <div className="flex gap-2 flex-wrap items-center">
           {(
             [
               {
@@ -988,22 +1063,16 @@ export function TimetableView() {
               <Icon className="w-3.5 h-3.5 mr-1" /> {label}
             </Button>
           ))}
+          {filterType !== "all" && (
+            <div className="ml-auto w-64">
+              <SearchSelect
+                options={filterOptions[filterType]}
+                value={filterValue}
+                onChange={setFilterValue}
+              />
+            </div>
+          )}
         </div>
-        {filterType !== "all" && (
-          <div className="flex gap-1.5 flex-wrap pt-1">
-            {filterOptions[filterType].map((opt) => (
-              <Button
-                key={opt}
-                variant={filterValue === opt ? "default" : "ghost"}
-                size="sm"
-                className="text-xs h-7 px-2.5"
-                onClick={() => setFilterValue(opt)}
-              >
-                {opt}
-              </Button>
-            ))}
-          </div>
-        )}
       </motion.div>
 
       <motion.div

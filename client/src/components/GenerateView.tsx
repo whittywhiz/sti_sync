@@ -31,6 +31,7 @@ interface GenerateResult {
   classesCreated: number;
   classes: GeneratedClass[];
   error?: string;
+  capacityWarnings?: string[];
 }
 
 interface SummaryCounts {
@@ -51,7 +52,7 @@ export function GenerateView() {
   const [result, setResult] = useState<GenerateResult | null>(null);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
+  const [confirmCount, setConfirmCount] = useState<number | null>(null);
   const fetchCounts = async () => {
     setCountsLoading(true);
 
@@ -67,7 +68,24 @@ export function GenerateView() {
   useEffect(() => {
     fetchCounts();
   }, []);
-
+  const handleClick = async () => {
+    setError(null);
+    try {
+      const res = await fetch("/api/classes");
+      if (!res.ok) throw new Error("check failed");
+      const classes = await res.json();
+      if (Array.isArray(classes) && classes.length > 0) {
+        setConfirmCount(classes.length);
+        return;
+      }
+    } catch {
+      setError(
+        "Could not check for an existing timetable. Is the backend running?",
+      );
+      return;
+    }
+    handleGenerate();
+  };
   const handleGenerate = async () => {
     setGenerating(true);
     setError(null);
@@ -147,13 +165,15 @@ export function GenerateView() {
 
         <div className="text-sm text-muted-foreground space-y-1">
           <p>• Requires an active schedule (term) to already exist</p>
-          <p>• Room capacity must meet section student count</p>
+          <p>
+            • Rooms that fit the section size are preferred; any section placed
+            in a smaller room is flagged after generating
+          </p>
           <p>• No professor, room, or section double-booking</p>
           <p>• Lab courses go to Laboratory rooms, PE to the Gym, etc.</p>
         </div>
-
         <Button
-          onClick={handleGenerate}
+          onClick={handleClick}
           disabled={generating}
           size="lg"
           className="w-full"
@@ -193,8 +213,48 @@ export function GenerateView() {
               </p>
             </div>
           </div>
+
+          {result.capacityWarnings && result.capacityWarnings.length > 0 && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 space-y-1">
+              <p className="text-sm font-medium">Room capacity warnings</p>
+              {result.capacityWarnings.map((w) => (
+                <p key={w} className="text-sm text-muted-foreground">
+                  • {w}
+                </p>
+              ))}
+            </div>
+          )}
         </motion.div>
       )}
+      {confirmCount !== null &&
+        createPortal(
+          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40">
+            <div className="w-full max-w-md space-y-4 rounded-xl bg-white p-6 shadow-lg">
+              <h3 className="font-heading text-lg font-semibold">
+                Replace existing timetable?
+              </h3>
+              <p className="text-sm text-muted-foreground">
+                This semester already has {confirmCount} scheduled classes.
+                Generating again deletes them, including any classes you moved
+                by hand, and builds a new timetable.
+              </p>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setConfirmCount(null)}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={() => {
+                    setConfirmCount(null);
+                    handleGenerate();
+                  }}
+                >
+                  Generate anyway
+                </Button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
       {(countsLoading || generating) &&
         createPortal(
           <div

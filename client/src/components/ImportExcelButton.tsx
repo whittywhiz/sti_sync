@@ -50,8 +50,8 @@ export function ImportExcelButton({
       if (data.skippedAvailability?.length) {
         msg += ` (missing availability: ${data.skippedAvailability.join(", ")})`;
       }
-      if (data.unknownDays?.length) {
-        msg += ` (unknown days: ${data.unknownDays.join(", ")})`;
+          if (data.unmatchedDepartments?.length) {
+        msg += ` (unknown department, set to Unassigned: ${data.unmatchedDepartments.join(", ")})`;
       }
 
       if (parts.length > 0) {

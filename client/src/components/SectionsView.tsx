@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { authFetch } from "../lib/authFetch";
 import {
   Plus,
@@ -33,10 +33,10 @@ interface Section {
   program_id: number;
   section_name: string | null;
 }
-
 interface Program {
   program_id: number;
   description: string;
+  code: string;
 }
 
 interface Course {
@@ -188,7 +188,12 @@ function SectionForm({
         <Button type="submit" size="sm">
           <Check className="w-4 h-4 mr-1" /> Save
         </Button>
-        <Button type="button" size="sm" variant="outline" onClick={onCancel}>
+        <Button
+          size="sm"
+          variant="outline"
+          className="!bg-white hover:!bg-accent"
+          onClick={onCancel}
+        >
           <X className="w-4 h-4 mr-1" /> Cancel
         </Button>
       </div>
@@ -207,6 +212,35 @@ export function SectionsView() {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!dropdownOpen) return;
+
+    const handleClickOutside = (e: PointerEvent) => {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(e.target as Node)
+      ) {
+        setDropdownOpen(false);
+      }
+    };
+
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setDropdownOpen(false);
+      }
+    };
+
+    document.addEventListener("pointerdown", handleClickOutside, true);
+    document.addEventListener("keydown", handleEscape);
+
+    return () => {
+      document.removeEventListener("pointerdown", handleClickOutside, true);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [dropdownOpen]);
+
   const [error, setError] = useState<string | null>(null);
   const [showSemForm, setShowSemForm] = useState(false);
   const [showCopy, setShowCopy] = useState(false);
@@ -221,6 +255,7 @@ export function SectionsView() {
   const [deleteTarget, setDeleteTarget] = useState<Section | null>(null);
   const [selected, setSelected] = useState<number[]>([]);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [programFilter, setProgramFilter] = useState("");
   const [archiveTarget, setArchiveTarget] = useState<{
     s: Schedule;
     isActive: boolean;
@@ -487,12 +522,13 @@ export function SectionsView() {
 
   const sectionDisplayName = useCallback(
     (s: Section) => {
-      const label = programCode(s.program_id);
-      return `${label} ${s.year_level}${s.section_name ? " " + s.section_name : ""}`;
+      const p = programs.find((pr) => pr.program_id === s.program_id);
+      const code = p?.code ?? p?.description ?? "";
+      const yearDigit = s.year_level.match(/\d/)?.[0] ?? "";
+      return `${code}${yearDigit}${s.section_name ?? ""}`;
     },
-    [programCode],
+    [programs],
   );
-
   const courseCountFor = useCallback(
     (s: Section) =>
       curriculums.filter(
@@ -502,13 +538,13 @@ export function SectionsView() {
   );
 
   const filtered = useMemo(() => {
-    if (!search) return sections;
     const q = search.toLowerCase();
     return sections.filter((s) => {
-      const label = sectionDisplayName(s).toLowerCase();
-      return label.includes(q);
+      if (programFilter && String(s.program_id) !== programFilter) return false;
+      if (!search) return true;
+      return sectionDisplayName(s).toLowerCase().includes(q);
     });
-  }, [sections, search, sectionDisplayName]);
+  }, [sections, search, programFilter, sectionDisplayName]);
 
   const sorted = useMemo(
     () =>
@@ -537,7 +573,7 @@ export function SectionsView() {
             </p>
           </div>
           <div className="flex items-center gap-3">
-            <div className="relative">
+            <div className="relative" ref={dropdownRef}>
               <button
                 onClick={() => setDropdownOpen(!dropdownOpen)}
                 className="flex items-center gap-2 px-4 py-2 bg-yellow-400 text-black rounded-md font-medium text-sm hover:bg-yellow-500 transition-colors"
@@ -634,8 +670,8 @@ export function SectionsView() {
             </Button>
           </div>
         </div>
-        <div className="glass-card rounded-xl p-4">
-          <div className="relative">
+        <div className="glass-card rounded-xl p-4 flex gap-3">
+          <div className="relative flex-1">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <Input
               placeholder="Search by program, year level, or section…"
@@ -647,6 +683,18 @@ export function SectionsView() {
               className="pl-9"
             />
           </div>
+          <select
+            value={programFilter}
+            onChange={(e) => setProgramFilter(e.target.value)}
+            className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+          >
+            <option value="">All programs</option>
+            {programs.map((p) => (
+              <option key={p.program_id} value={String(p.program_id)}>
+                {p.description}
+              </option>
+            ))}
+          </select>
         </div>
 
         {selected.length > 0 && (

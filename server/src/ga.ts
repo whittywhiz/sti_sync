@@ -367,22 +367,65 @@ function roomPoolForRequirement(
   req: SchedulingRequirement,
   courseType: string,
   input: SchedulingInput,
+  sectionProgramId: number,
 ): SchedulingInput["rooms"] {
-  const labRooms = input.rooms.filter(
-    (r) => r.type?.toLowerCase() === "laboratory",
+  const isLab = courseType === "laboratory";
+
+  const filterReserved = (rooms: SchedulingInput["rooms"]) =>
+    rooms.filter(
+      (r) => r.program_id == null || r.program_id === sectionProgramId,
+    );
+
+  const reservedForSection = input.rooms.filter(
+    (r) => r.program_id === sectionProgramId,
   );
+
+  if (isLab && reservedForSection.length > 0) {
+    if (req.session_number === 2) {
+      const lectureRooms = input.rooms.filter(
+        (r) =>
+          r.type?.toLowerCase() === "lecture" &&
+          (r.program_id == null || r.program_id === sectionProgramId),
+      );
+      return [...reservedForSection, ...lectureRooms];
+    }
+    return reservedForSection;
+  }
+
   const matchingTypeRooms = input.rooms.filter(
     (r) => r.type?.toLowerCase() === courseType,
   );
-  if (req.prefers_lab_room && labRooms.length > 0) return labRooms;
-  if (matchingTypeRooms.length > 0) return matchingTypeRooms;
-  return input.rooms;
+  const labRooms = input.rooms.filter(
+    (r) => r.type?.toLowerCase() === "laboratory",
+  );
+  if (req.prefers_lab_room && labRooms.length > 0) {
+    if (req.session_number === 2) {
+      const lectureRooms = input.rooms.filter(
+        (r) =>
+          r.type?.toLowerCase() === "lecture" &&
+          (r.program_id == null || r.program_id === sectionProgramId),
+      );
+      return [...filterReserved(labRooms), ...lectureRooms];
+    }
+    return filterReserved(labRooms);
+  }
+  if (matchingTypeRooms.length > 0) return filterReserved(matchingTypeRooms);
+  return filterReserved(input.rooms);
+}
+function pickRoomForSection(
+  rooms: SchedulingInput["rooms"],
+  students: number,
+): SchedulingInput["rooms"][number] {
+  const fitting = rooms.filter((r) => r.capacity >= students);
+  if (fitting.length > 0) return randomFrom(fitting);
+  return rooms.reduce((a, b) => (b.capacity > a.capacity ? b : a));
 }
 
 export function generateRandomCandidate(
   requirements: SchedulingRequirement[],
   input: SchedulingInput,
 ): ClassAssignment[] {
+  const sectionMap = new Map(input.sections.map((s) => [s.section_id, s]));
   const courseMap = new Map(input.courses.map((c) => [c.course_code, c]));
   const employeesByDay = buildEmployeesByDay(input);
   const availabilityByEmployeeDay = buildAvailabilityByEmployeeDay(input);
@@ -401,10 +444,19 @@ export function generateRandomCandidate(
       b.session_duration_hours - a.session_duration_hours ||
       Number(!!b.prefers_lab_room) - Number(!!a.prefers_lab_room),
   );
+  const usedDaysBySectionCourse = new Map<string, number>();
   for (const req of ordered) {
     const course = courseMap.get(req.course_code);
     const courseType = (course?.course_type_description ?? "").toLowerCase();
-    const roomPool = roomPoolForRequirement(req, courseType, input);
+    const scKey = `${req.section_id}-${req.course_code}`;
+    const usedDay = usedDaysBySectionCourse.get(scKey);
+    const section = sectionMap.get(req.section_id);
+    const roomPool = roomPoolForRequirement(
+      req,
+      courseType,
+      input,
+      section?.program_id ?? 0,
+    );
 
     const durationHours =
       req.session_duration_hours ?? course?.total_hours ?? 1.5;
@@ -419,7 +471,10 @@ export function generateRandomCandidate(
       dAttempt < DAY_ATTEMPT_LIMIT;
       dAttempt++
     ) {
-      const day = pickDayWithAvailableEmployees(input, employeesByDay);
+      const availableDays = usedDay
+        ? { ...input, days: input.days.filter((d) => d.day_id !== usedDay) }
+        : input;
+      const day = pickDayWithAvailableEmployees(availableDays, employeesByDay);
       const candidatesForDay = employeesByDay.get(day.day_id) ?? [];
       const basePool =
         candidatesForDay.length > 0 ? candidatesForDay : input.employees;
@@ -495,7 +550,19 @@ export function generateRandomCandidate(
         endMin,
       ),
     );
-    const room = randomFrom(freeRooms.length > 0 ? freeRooms : roomPool);
+    const freeLabRooms = freeRooms.filter(
+      (r) => r.type?.toLowerCase() === "laboratory",
+    );
+    const roomsToPickFrom =
+      freeLabRooms.length > 0
+        ? freeLabRooms
+        : freeRooms.length > 0
+          ? freeRooms
+          : roomPool;
+    const room = pickRoomForSection(
+      roomsToPickFrom,
+      sectionMap.get(req.section_id)?.number_of_students ?? 0,
+    );
 
     const interval = { start: startMin, end: endMin };
     const empKey = `${employeeId}-${dayId}`;
@@ -526,6 +593,9 @@ export function generateRandomCandidate(
       session_number: req.session_number,
       session_duration_hours: req.session_duration_hours,
     });
+    if (!usedDaysBySectionCourse.has(scKey)) {
+      usedDaysBySectionCourse.set(scKey, dayId);
+    }
   }
 
   return assignments;
@@ -587,6 +657,7 @@ export function mutate(
   input: SchedulingInput,
 ): Candidate {
   const courseMap = new Map(input.courses.map((c) => [c.course_code, c]));
+
   const sectionMap = new Map(input.sections.map((s) => [s.section_id, s]));
   const employeeMap = new Map(input.employees.map((e) => [e.employee_id, e]));
   const employeesByDay = buildEmployeesByDay(input);
@@ -668,14 +739,25 @@ export function mutate(
           const matchingTypeRooms = input.rooms.filter(
             (r) => r.type?.toLowerCase() === courseType,
           );
+          const sectionProgramId = section?.program_id ?? 0;
+          const reservedForSection = input.rooms.filter(
+            (r) => r.program_id === sectionProgramId,
+          );
+          const filterReserved = (rooms: SchedulingInput["rooms"]) =>
+            rooms.filter(
+              (r) => r.program_id == null || r.program_id === sectionProgramId,
+            );
+
           const roomPool =
-            prefersLabRoom && homeLabRooms.length > 0
-              ? homeLabRooms
-              : prefersLabRoom && labRooms.length > 0
-                ? labRooms
-                : matchingTypeRooms.length > 0
-                  ? matchingTypeRooms
-                  : input.rooms;
+            isLab && reservedForSection.length > 0
+              ? reservedForSection
+              : prefersLabRoom && homeLabRooms.length > 0
+                ? homeLabRooms
+                : prefersLabRoom && labRooms.length > 0
+                  ? filterReserved(labRooms)
+                  : matchingTypeRooms.length > 0
+                    ? filterReserved(matchingTypeRooms)
+                    : filterReserved(input.rooms);
 
           const s = timeToMinutes(assignment.start_time);
           const e = timeToMinutes(assignment.end_time);
@@ -695,7 +777,10 @@ export function mutate(
               ),
           );
           if (freeRooms.length === 0) return assignment;
-          const newRoom = randomFrom(freeRooms);
+          const newRoom = pickRoomForSection(
+            freeRooms,
+            section?.number_of_students ?? 0,
+          );
           return { ...assignment, room_id: newRoom.room_id };
         }
         case 1: {
@@ -772,7 +857,22 @@ export function mutate(
             dAttempt < DAY_ATTEMPT_LIMIT;
             dAttempt++
           ) {
-            const day = pickDayWithAvailableEmployees(input, employeesByDay);
+            const siblingDay = original.find(
+              (a, i) =>
+                i !== index &&
+                a.section_id === assignment.section_id &&
+                a.course_code === assignment.course_code,
+            )?.day_id;
+            const availableDays = siblingDay
+              ? {
+                  ...input,
+                  days: input.days.filter((d) => d.day_id !== siblingDay),
+                }
+              : input;
+            const day = pickDayWithAvailableEmployees(
+              availableDays,
+              employeesByDay,
+            );
             const candidatesForDay = employeesByDay.get(day.day_id) ?? [];
             const basePool =
               candidatesForDay.length > 0 ? candidatesForDay : input.employees;
@@ -956,7 +1056,6 @@ export function runGA(
       "ROOM_CONFLICT",
       "EMPLOYEE_CONFLICT",
       "SECTION_CONFLICT",
-      "ROOM_CAPACITY_EXCEEDED",
       "EMPLOYEE_UNAVAILABLE",
       "ROOM_TYPE_MISMATCH",
       "EMPLOYEE_MAX_HOURS_EXCEEDED",

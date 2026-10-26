@@ -3,6 +3,7 @@ export interface RoomData {
   room_number: string;
   capacity: number;
   type: string | null;
+  program_id: number | null;
 }
 
 export interface EmployeeData {
@@ -93,7 +94,8 @@ export interface ConstraintViolation {
     | "EMPLOYEE_MAX_HOURS_EXCEEDED"
     | "LAB_PREFERENCE_UNMET"
     | "HOME_LAB_PREFERENCE_UNMET"
-    | "LONG_VACANT_GAP";
+    | "LONG_VACANT_GAP"
+    | "SAME_COURSE_SAME_DAY";
   message: string;
   weight: number;
 }
