@@ -20,12 +20,13 @@ import { Button } from "@/components/ui/button";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { motion } from "framer-motion";
+import AssignInstructorModal from "./AssignInstructorModal";
 
 import * as XLSX from "xlsx";
 
 interface ClassRow {
   class_id: number;
-  employee_id: number;
+  employee_id: number | null;
   room_id: number;
   day_id: number;
   schedule_id: number;
@@ -43,6 +44,7 @@ interface ClassRow {
   school_term: string;
   section_name: string | null;
   code: string | null;
+  program_id: number;
 }
 
 interface HistoryRow {
@@ -70,6 +72,7 @@ interface EmployeeRow {
   mname: string | null;
   fname: string;
   name: string;
+  department: string | null;
   max_hours_per_day: number | null;
   max_hours_per_week: number | null;
 }
@@ -78,6 +81,7 @@ interface RoomRow {
   room_id: number;
   room_number: string;
   type?: string;
+  program_id?: number | null;
 }
 interface VacantSlot {
   day: string;
@@ -106,21 +110,29 @@ function getVacantSlots(
     timeToHourFloat(entry.end_time) - timeToHourFloat(entry.start_time);
   const currentRoom = allRooms.find((r) => r.room_id === entry.room_id);
   const requiredType = (currentRoom as any)?.type ?? null;
-  const candidateRooms = requiredType
-    ? allRooms.filter((r) => (r as any).type === requiredType)
+  const sameType = requiredType
+    ? allRooms.filter((r) => r.type === requiredType)
     : allRooms;
+  const ownRooms = sameType.filter((r) => r.program_id === entry.program_id);
+  const candidateRooms =
+    requiredType?.toLowerCase() === "laboratory" && ownRooms.length > 0
+      ? ownRooms
+      : sameType.filter(
+          (r) => r.program_id == null || r.program_id === entry.program_id,
+        );
   const others = allClasses.filter((c) => c.class_id !== entry.class_id);
   const slots: VacantSlot[] = [];
   const entryStart = timeToHourFloat(entry.start_time);
   const EPSILON = 0.01;
 
-  const employee = allEmployees.find(
-    (e) => e.employee_id === entry.employee_id,
-  );
-
-  const otherClassesForEmployee = others.filter(
-    (c) => c.employee_id === entry.employee_id,
-  );
+  const employee =
+    entry.employee_id === null
+      ? undefined
+      : allEmployees.find((e) => e.employee_id === entry.employee_id);
+  const otherClassesForEmployee =
+    entry.employee_id === null
+      ? []
+      : others.filter((c) => c.employee_id === entry.employee_id);
   const hoursByDay = new Map<number, number>();
   let weeklyHours = 0;
   for (const c of otherClassesForEmployee) {
@@ -167,8 +179,9 @@ function getVacantSlots(
 
         const employeeConflict = others.some(
           (c) =>
-            c.day_id === day.day_id &&
+            entry.employee_id !== null &&
             c.employee_id === entry.employee_id &&
+            c.day_id === day.day_id &&
             start < timeToHourFloat(c.end_time) &&
             end > timeToHourFloat(c.start_time),
         );
@@ -183,13 +196,15 @@ function getVacantSlots(
         );
         if (sectionConflict) continue;
 
-        const isAvailable = allAvailability.some(
-          (a) =>
-            a.employee_id === entry.employee_id &&
-            a.day_id === day.day_id &&
-            start >= timeToHourFloat(a.start_time) &&
-            end <= timeToHourFloat(a.end_time),
-        );
+        const isAvailable =
+          entry.employee_id === null ||
+          allAvailability.some(
+            (a) =>
+              a.employee_id === entry.employee_id &&
+              a.day_id === day.day_id &&
+              start >= timeToHourFloat(a.start_time) &&
+              end <= timeToHourFloat(a.end_time),
+          );
         if (!isAvailable) continue;
 
         slots.push({
@@ -256,7 +271,7 @@ const ENTRY_COLORS = [
   },
 ];
 
-type FilterType = "all" | "professor" | "room" | "section" | "program";
+type FilterType = "all" | "professor" | "room" | "section" | "course";
 
 function timeToHourFloat(time: string): number {
   const [h, m] = time.split(":").map(Number);
@@ -315,6 +330,9 @@ function formatDuration(startTime: string, endTime: string): string {
 function sectionLabel(c: any): string {
   if (!c.code || !c.section_name) return `${c.program} Sec ${c.section_id}`;
   return `${c.code}${c.year_level.charAt(0)}${c.school_term.charAt(0)}${c.section_name}`;
+}
+function courseLabel(c: ClassRow): string {
+  return `${c.course_code} - ${c.course}`;
 }
 
 const HEAD = [
@@ -393,15 +411,47 @@ function SearchSelect({
   options,
   value,
   onChange,
+  groups,
+  placeholder,
 }: {
   options: string[];
   value: string;
   onChange: (v: string) => void;
+  groups?: { label: string; options: string[] }[];
+  placeholder: string;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+
   const shown = options.filter((o) =>
     o.toLowerCase().includes(query.toLowerCase()),
+  );
+
+  const filteredGroups = (groups ?? [])
+    .map((group) => ({
+      ...group,
+      options: group.options.filter((o) =>
+        o.toLowerCase().includes(query.toLowerCase()),
+      ),
+    }))
+    .filter((group) => group.options.length > 0);
+
+  const renderOption = (o: string, key: string) => (
+    <button
+      key={key}
+      type="button"
+      onClick={() => {
+        onChange(o);
+        setOpen(false);
+      }}
+      className={`block w-full px-3 py-2 text-left text-sm ${
+        o === value
+          ? "bg-yellow-400 font-semibold text-black"
+          : "hover:bg-yellow-100"
+      }`}
+    >
+      {o}
+    </button>
   );
 
   return (
@@ -427,29 +477,26 @@ function SearchSelect({
                 autoFocus
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search…"
+                placeholder={placeholder}
                 className="h-8 w-full rounded-md border border-input px-2 text-sm"
               />
             </div>
+
             <div className="max-h-60 overflow-y-auto">
-              {shown.map((o) => (
-                <button
-                  key={o}
-                  type="button"
-                  onClick={() => {
-                    onChange(o);
-                    setOpen(false);
-                  }}
-                  className={`block w-full px-3 py-2 text-left text-sm ${
-                    o === value
-                      ? "bg-yellow-400 font-semibold text-black"
-                      : "hover:bg-yellow-100"
-                  }`}
-                >
-                  {o}
-                </button>
-              ))}
-              {shown.length === 0 && (
+              {groups
+                ? filteredGroups.map((group) => (
+                    <div key={group.label}>
+                      <div className="sticky top-0 z-10 bg-gray-100 px-3 py-2 text-xs font-bold uppercase tracking-wide text-gray-600">
+                        {group.label}
+                      </div>
+                      {group.options.map((o) =>
+                        renderOption(o, `${group.label}-${o}`),
+                      )}
+                    </div>
+                  ))
+                : shown.map((o) => renderOption(o, o))}
+
+              {(groups ? filteredGroups.length === 0 : shown.length === 0) && (
                 <p className="px-3 py-2 text-sm text-muted-foreground">
                   No matches
                 </p>
@@ -475,6 +522,7 @@ export function TimetableView() {
   const [selectedEntry, setSelectedEntry] = useState<ClassRow | null>(null);
   const [moving, setMoving] = useState(false);
   const [slotDayFilter, setSlotDayFilter] = useState<string>("All Days");
+  const [assignEntry, setAssignEntry] = useState<ClassRow | null>(null);
   const [panelPos, setPanelPos] = useState<{ top: number; left: number }>({
     top: 12,
     left: 12,
@@ -556,21 +604,24 @@ export function TimetableView() {
     }
   };
 
-  const handleMoveClass = async (slot: VacantSlot) => {
-    if (!selectedEntry) return;
+  const handleMoveClass = async (
+    entry: ClassRow,
+    slot: VacantSlot,
+    employeeId: number | null = entry.employee_id,
+  ): Promise<boolean> => {
     setMoving(true);
 
     const previous = {
-      start_time: selectedEntry.start_time,
-      end_time: selectedEntry.end_time,
-      employee_id: selectedEntry.employee_id,
-      room_id: selectedEntry.room_id,
-      section_id: selectedEntry.section_id,
-      course_code: selectedEntry.course_code,
-      day_id: selectedEntry.day_id,
-      schedule_id: selectedEntry.schedule_id,
+      start_time: entry.start_time,
+      end_time: entry.end_time,
+      employee_id: entry.employee_id,
+      room_id: entry.room_id,
+      section_id: entry.section_id,
+      course_code: entry.course_code,
+      day_id: entry.day_id,
+      schedule_id: entry.schedule_id,
     };
-    const classId = selectedEntry.class_id;
+    const classId = entry.class_id;
 
     try {
       const res = await fetch(`/api/classes/${classId}`, {
@@ -579,7 +630,7 @@ export function TimetableView() {
         body: JSON.stringify({
           start_time: slot.start_time,
           end_time: slot.end_time,
-          employee_id: previous.employee_id,
+          employee_id: employeeId,
           room_id: slot.room_id,
           section_id: previous.section_id,
           course_code: previous.course_code,
@@ -588,40 +639,65 @@ export function TimetableView() {
         }),
       });
       if (!res.ok) throw new Error("Move failed");
-      const movedCourseCode = previous.course_code;
       setSelectedEntry(null);
 
       await fetchClasses(false);
 
       toast.success(
-        `${movedCourseCode} moved to ${slot.day} · ${formatTime12hr(
+        `${previous.course_code} moved to ${slot.day} · ${formatTime12hr(
           slot.start_time,
         )}–${formatTime12hr(slot.end_time)} · ${slot.room_number}`,
         {
           duration: 10000,
-          action: {
-            label: "View",
-            onClick: () => goToClass(classId),
-          },
-          cancel: {
-            label: "Undo",
-            onClick: () => undoMove(classId, previous),
-          },
+          action: { label: "View", onClick: () => goToClass(classId) },
+          cancel: { label: "Undo", onClick: () => undoMove(classId, previous) },
         },
       );
+      return true;
     } catch (err) {
       console.error("Failed to move class", err);
       toast.error("Failed to move class. Please try again.");
+      return false;
     } finally {
       setMoving(false);
     }
+  };
+  const undoAssign = async (classId: number, prevEmployeeId: number | null) => {
+    try {
+      const res = await fetch(`/api/classes/${classId}/employee`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          employee_id: prevEmployeeId,
+          confirm_overload: true,
+        }),
+      });
+      if (!res.ok) throw new Error();
+      await fetchClasses(false);
+      toast.success("Instructor change undone");
+    } catch {
+      toast.error("Failed to undo. Please try again.");
+    }
+  };
+
+  const handleAssignDone = (entry: ClassRow, msg?: string) => {
+    const id = entry.class_id;
+    const prevEmp = entry.employee_id;
+    setAssignEntry(null);
+    fetchClasses(false);
+    if (msg)
+      toast.success(msg, {
+        duration: 10000,
+        action: { label: "View", onClick: () => goToClass(id) },
+        cancel: { label: "Undo", onClick: () => undoAssign(id, prevEmp) },
+      });
   };
   const undoMove = async (
     classId: number,
     previous: {
       start_time: string;
       end_time: string;
-      employee_id: number;
+      employee_id: number | null;
       room_id: number;
       section_id: number;
       course_code: string;
@@ -649,8 +725,11 @@ export function TimetableView() {
     if (!target) return;
 
     const isVisible = classMatchesFilter(target, filterType, filterValue);
-    if (!isVisible && filterType === "room") {
-      setFilterValue(target.room);
+    if (!isVisible) {
+      if (filterType === "room") setFilterValue(target.room);
+      else if (filterType === "professor") setFilterValue(target.professor);
+      else if (filterType === "section") setFilterValue(sectionLabel(target));
+      else if (filterType === "course") setFilterValue(courseLabel(target));
     }
 
     const scrollAndHighlight = () => {
@@ -678,13 +757,13 @@ export function TimetableView() {
     }
   };
 
-  const openEntry = (entry: ClassRow, e: React.MouseEvent<HTMLDivElement>) => {
+  const openEntry = (entry: ClassRow, cell: HTMLElement) => {
     setSlotDayFilter("All Days");
     setPendingSlot(null);
     setSelectedEntry(entry);
 
     const container = calendarWrapperRef.current;
-    const cell = e.currentTarget;
+
     if (container && cell) {
       const containerRect = container.getBoundingClientRect();
       const cellRect = cell.getBoundingClientRect();
@@ -745,21 +824,35 @@ export function TimetableView() {
     return {
       professor: uniq(allEmployees.map((e) => e.name)),
       room: uniq(allRooms.map((r) => r.room_number)),
-      section: uniq(
-        classes.map(
-          (c) => `${c.program} · ${c.year_level} · Section ${c.section_id}`,
-        ),
-      ),
-      program: uniq(classes.map((c) => c.program)),
+      section: uniq(classes.map((c) => sectionLabel(c))),
+      course: uniq(classes.map((c) => courseLabel(c))),
     };
   }, [classes, allRooms, allEmployees]);
 
+  const professorGroups = useMemo(() => {
+    const grouped = new Map<string, string[]>();
+
+    for (const employee of allEmployees) {
+      const department = employee.department?.trim() || "Other / Unassigned";
+
+      const names = grouped.get(department) ?? [];
+      names.push(employee.name);
+      grouped.set(department, names);
+    }
+
+    const groups = Array.from(grouped.entries())
+      .map(([label, names]) => ({
+        label,
+        options: Array.from(new Set(names)).sort((a, b) => a.localeCompare(b)),
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+    return groups;
+  }, [allEmployees]);
   useEffect(() => {
     if (!filterValue && filterOptions[filterType]?.length) {
       setFilterValue(filterOptions[filterType][0]);
     }
   }, [filterType, filterOptions, filterValue]);
-
   const classMatchesFilter = (
     c: ClassRow,
     type: FilterType,
@@ -768,11 +861,9 @@ export function TimetableView() {
     if (type === "all") return true;
     if (type === "professor") return c.professor === value;
     if (type === "room") return c.room === value;
-    if (type === "program") return c.program === value;
+    if (type === "course") return courseLabel(c) === value;
     if (type === "section") {
-      return (
-        `${c.program} · ${c.year_level} · Section ${c.section_id}` === value
-      );
+      return sectionLabel(c) === value;
     }
     return true;
   };
@@ -793,6 +884,20 @@ export function TimetableView() {
     return map;
   }, [filteredClasses]);
 
+  const assignSlots = useMemo(
+    () =>
+      assignEntry
+        ? getVacantSlots(
+            assignEntry,
+            classes,
+            allRooms,
+            allDays,
+            allAvailability,
+            allEmployees,
+          )
+        : [],
+    [assignEntry, classes, allRooms, allDays, allAvailability, allEmployees],
+  );
   const allVacantSlots = useMemo(() => {
     if (!selectedEntry) return [];
     return getVacantSlots(
@@ -960,10 +1065,18 @@ export function TimetableView() {
           </p>
         </div>
         {historyDialog}
+        {assignEntry && (
+          <AssignInstructorModal
+            cls={assignEntry}
+            vacantSlots={assignSlots}
+            onClose={() => setAssignEntry(null)}
+            onDone={(msg) => handleAssignDone(assignEntry, msg)}
+            onMove={(slot, empId) => handleMoveClass(assignEntry, slot, empId)}
+          />
+        )}
       </div>
     );
   }
-
   return (
     <div className="space-y-4">
       <motion.div
@@ -1034,7 +1147,7 @@ export function TimetableView() {
               {
                 type: "professor" as FilterType,
                 icon: Users,
-                label: "Professor",
+                label: "Instructor",
               },
               { type: "room" as FilterType, icon: DoorOpen, label: "Room" },
               {
@@ -1043,9 +1156,9 @@ export function TimetableView() {
                 label: "Section",
               },
               {
-                type: "program" as FilterType,
+                type: "course" as FilterType,
                 icon: GraduationCap,
-                label: "Program",
+                label: "Course",
               },
             ] as const
           ).map(({ type, icon: Icon, label }) => (
@@ -1069,6 +1182,18 @@ export function TimetableView() {
                 options={filterOptions[filterType]}
                 value={filterValue}
                 onChange={setFilterValue}
+                placeholder={
+                  filterType === "professor"
+                    ? "Search instructor"
+                    : filterType === "room"
+                      ? "Search room"
+                      : filterType === "section"
+                        ? "Search section"
+                        : "Search course"
+                }
+                groups={
+                  filterType === "professor" ? professorGroups : undefined
+                }
               />
             </div>
           )}
@@ -1148,6 +1273,7 @@ export function TimetableView() {
                         const isFrontmost = isHovered || isHighlighted;
                         const isStacked = entry.colCount > 1;
                         const cascadeOffset = entry.col * 10;
+                        const isUnassigned = entry.employee_id === null;
 
                         return (
                           <div
@@ -1157,8 +1283,12 @@ export function TimetableView() {
                               setHoveredClassId(entry.class_id)
                             }
                             onMouseLeave={() => setHoveredClassId(null)}
-                            onClick={(e) => openEntry(entry, e)}
-                            className={`absolute rounded-lg border border-gray-200 border-l-4 border-l-amber-400 bg-white transition-all duration-200 ease-in-out cursor-pointer ${
+                            onClick={() => setAssignEntry(entry)}
+                            className={`absolute rounded-lg border ${
+                              isUnassigned
+                                ? "border-amber-300 border-l-4 border-l-amber-500 bg-amber-50/40"
+                                : "border-gray-200 border-l-4 border-l-amber-400 bg-white"
+                            } transition-all duration-200 ease-in-out cursor-pointer ${
                               isSelected
                                 ? "ring-2 ring-blue-500 ring-offset-1"
                                 : ""
@@ -1199,17 +1329,31 @@ export function TimetableView() {
                                 </p>
                               )}
                               {isCompact ? (
-                                <p className="text-[10px] font-medium truncate text-slate-600">
-                                  {entry.professor}
+                                <p
+                                  className={`text-[10px] font-medium truncate ${
+                                    isUnassigned
+                                      ? "text-amber-700 font-semibold"
+                                      : "text-slate-600"
+                                  }`}
+                                >
+                                  {isUnassigned
+                                    ? "Unassigned"
+                                    : entry.professor}
                                 </p>
                               ) : (
                                 <>
                                   <p className="text-[9px] text-slate-500 truncate leading-tight">
                                     {entry.program} · Sec {entry.section_id}
                                   </p>
-                                  <p className="text-[10px] font-medium truncate text-slate-700">
-                                    {entry.professor}
-                                  </p>
+                                  {isUnassigned ? (
+                                    <span className="inline-flex items-center text-[9px] font-semibold text-amber-800 bg-amber-100 rounded px-1.5 py-0.5 w-fit leading-none">
+                                      + Add Prof
+                                    </span>
+                                  ) : (
+                                    <p className="text-[10px] font-medium truncate text-slate-700">
+                                      {entry.professor}
+                                    </p>
+                                  )}
                                 </>
                               )}
                               <p className="text-[9px] text-slate-500 mt-auto truncate leading-tight">
@@ -1333,7 +1477,7 @@ export function TimetableView() {
                       className="flex-1"
                       disabled={moving}
                       onClick={() => {
-                        handleMoveClass(pendingSlot);
+                        handleMoveClass(selectedEntry, pendingSlot);
                         setPendingSlot(null);
                       }}
                     >
@@ -1389,6 +1533,15 @@ export function TimetableView() {
         )}
       </motion.div>
       {historyDialog}
+      {assignEntry && (
+        <AssignInstructorModal
+          cls={assignEntry}
+          vacantSlots={assignSlots}
+          onClose={() => setAssignEntry(null)}
+          onDone={(msg) => handleAssignDone(assignEntry, msg)}
+          onMove={(slot, empId) => handleMoveClass(assignEntry, slot, empId)}
+        />
+      )}
     </div>
   );
 }

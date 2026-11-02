@@ -69,7 +69,7 @@ export interface SchedulingInput {
 export interface ClassAssignment {
   course_code: string;
   section_id: number;
-  employee_id: number;
+  employee_id: number | null;
   room_id: number;
   day_id: number;
   start_time: string;
@@ -105,7 +105,10 @@ export interface FitnessResult {
 }
 
 export const PROGRAM_HOME_LAB_ROOM_NUMBERS: Record<number, string[]> = {
-  4: ["Lab-1", "Lab-2"],
-  5: ["Lab-1", "Lab-2"],
-  6: ["Lab-1", "Lab-2"],
+  94: ["Lab 1", "Lab 3"],
+  95: ["Lab 1", "Lab 3"],
+  100: ["Lab 2"],
+  104: ["Lab 2"],
 };
+
+export const STRICT_HOME_LAB_PROGRAM_IDS = new Set<number>([100, 104]);

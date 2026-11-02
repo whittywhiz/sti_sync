@@ -14,7 +14,7 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
 };
 const App = () => (
   <QueryClientProvider client={queryClient}>
-    <Toaster richColors position="top-right" />
+    <Toaster position="top-right" offset={16} />
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<LoginPage />} />

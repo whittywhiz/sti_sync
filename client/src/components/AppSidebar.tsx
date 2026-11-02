@@ -20,7 +20,7 @@ import { Button } from "@/components/ui/button";
 const navItems = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { id: "programs", label: "Programs", icon: School },
-  { id: "professors", label: "Professors", icon: Users },
+  { id: "professors", label: "Instructor", icon: Users },
   { id: "rooms", label: "Rooms", icon: DoorOpen },
   { id: "courses", label: "Courses", icon: BookOpen },
   { id: "sections", label: "Sections", icon: GraduationCap },
@@ -41,7 +41,7 @@ export function AppSidebar() {
     <aside className="w-64 h-screen sticky top-0 flex-shrink-0 bg-sidebar text-sidebar-foreground flex flex-col">
       <div className="p-6 border-b border-sidebar-border flex-shrink-0">
         <img
-          src="/sidebarlogo.png"
+          src="/login-icon.png"
           alt="STI-Sync"
           className="h-14 w-auto rounded-lg"
         />

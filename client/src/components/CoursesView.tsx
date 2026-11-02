@@ -328,7 +328,7 @@ function CourseForm({
 
       <div>
         <p className="text-sm font-medium mb-2">
-          Assigned Professors ({selectedEmployeeIds.length})
+          Assigned Instructor ({selectedEmployeeIds.length})
         </p>
         <button
           type="button"
@@ -338,7 +338,7 @@ function CourseForm({
           <span className="text-muted-foreground">
             {selectedEmployeeIds.length
               ? `${selectedEmployeeIds.length} selected`
-              : "Select professors"}
+              : "Select Instructors"}
           </span>
           <ChevronDown
             className={`w-4 h-4 transition-transform ${profOpen ? "rotate-180" : ""}`}
@@ -362,7 +362,7 @@ function CourseForm({
             <div className="max-h-48 overflow-y-auto">
               {filteredEmployees.length === 0 && (
                 <p className="p-3 text-xs text-muted-foreground">
-                  No professors found.
+                  No Instructor found.
                 </p>
               )}
               {filteredEmployees.map((e) => (
@@ -571,6 +571,7 @@ export function CoursesView() {
       }
       await saveCourseEmployees(code, v.employee_ids);
       await saveCurriculumForCourse(code, v.placements);
+      toast.success("Course added successfully");
       setShowForm(false);
       fetchAll();
     } catch (err) {
@@ -597,6 +598,7 @@ export function CoursesView() {
       }
       await saveCurriculumForCourse(editingId, v.placements);
       await saveCourseEmployees(editingId, v.employee_ids);
+      toast.success("Course updated successfully");
       setEditingId(null);
       fetchAll();
     } catch (err) {
@@ -632,6 +634,7 @@ export function CoursesView() {
         toast.error(data.error ?? "Failed to delete course");
         return;
       }
+      toast.success("Course deleted");
       setSelected((s) => s.filter((k) => codeOf(k) !== code));
       fetchAll();
     } catch (err) {
@@ -699,7 +702,7 @@ export function CoursesView() {
     placementsByCourse.get(code) ?? [];
 
   const matchesType = (cu: Curriculum) =>
-    filterType === "all" || (cu.subject_type ?? "Major") === filterType;
+    filterType === "all" || cu.year_level === filterType;
 
   const filtered = useMemo(() => {
     const matchingCuls = curriculums.filter(
@@ -736,24 +739,73 @@ export function CoursesView() {
       )
       .sort((a, b) => a.course_code.localeCompare(b.course_code));
   }, [courses, curriculums, filterProgram, filterType, search]);
+  //
 
   const grouped = useMemo(() => {
     const map = new Map<number, Course[]>();
+
     filtered.forEach((c) => {
       const cPlacements = placementsOfCourse(c.course_code).filter(matchesType);
+
       const progIds =
         filterProgram === "all"
           ? Array.from(new Set(cPlacements.map((cu) => cu.program_id)))
           : [Number(filterProgram)];
+
       progIds.forEach((pid) => {
         const arr = map.get(pid) ?? [];
         arr.push(c);
         map.set(pid, arr);
       });
     });
+
+    map.forEach((list, progId) => {
+      list.sort((a, b) => {
+        const getPlacementOrder = (course: Course) => {
+          const placements = placementsOfCourse(course.course_code).filter(
+            (cu) => cu.program_id === progId && matchesType(cu),
+          );
+
+          if (placements.length === 0) {
+            return { year: YEAR_LEVELS.length, sem: 99 };
+          }
+
+          const earliest = placements.reduce((best, current) => {
+            const currentYear = YEAR_LEVELS.indexOf(current.year_level);
+            const bestYear = YEAR_LEVELS.indexOf(best.year_level);
+
+            if (currentYear < bestYear) return current;
+            if (
+              currentYear === bestYear &&
+              (current.term ?? "1st Semester") === "1st Semester" &&
+              (best.term ?? "1st Semester") === "2nd Semester"
+            ) {
+              return current;
+            }
+
+            return best;
+          });
+
+          return {
+            year: YEAR_LEVELS.indexOf(earliest.year_level),
+            sem: earliest.term === "2nd Semester" ? 2 : 1,
+          };
+        };
+
+        const orderA = getPlacementOrder(a);
+        const orderB = getPlacementOrder(b);
+
+        return (
+          orderA.year - orderB.year ||
+          orderA.sem - orderB.sem ||
+          a.course_code.localeCompare(b.course_code)
+        );
+      });
+    });
     return Array.from(map.entries()).sort((a, b) => {
       const pa = programs.find((p) => p.program_id === a[0])?.description ?? "";
       const pb = programs.find((p) => p.program_id === b[0])?.description ?? "";
+
       return pa.localeCompare(pb);
     });
   }, [filtered, programs, filterProgram, filterType, curriculums]);
@@ -776,7 +828,16 @@ export function CoursesView() {
       list.every((c) => selected.includes(keyOf(progId, c.course_code)));
     return (
       <div className="glass-card rounded-xl overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="w-full table-fixed text-sm">
+          <colgroup>
+            <col className="w-12" />
+            <col className="w-28" />
+            <col />
+            <col className="w-28" />
+            <col className="w-40" />
+            <col className="w-52" />
+            <col className="w-32" />
+          </colgroup>
           <thead className="bg-background text-xs font-semibold text-muted-foreground">
             <tr className="border-b">
               <th className="w-10 px-4 py-3">
@@ -831,7 +892,7 @@ export function CoursesView() {
                     isSelected ? "bg-primary/5" : ""
                   }`}
                 >
-                  <td className="px-4 py-3 align-top">
+                  <td className="px-4 py-3 align-middle">
                     <input
                       type="checkbox"
                       checked={isSelected}
@@ -880,7 +941,7 @@ export function CoursesView() {
                         title="No professor assigned. Any available professor can be scheduled."
                         className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200 whitespace-nowrap"
                       >
-                        No professor assigned
+                        No Instructor assigned
                       </span>
                     )}
                   </td>
@@ -917,9 +978,6 @@ export function CoursesView() {
         <div className="flex items-center justify-between mb-4">
           <div>
             <h2 className="font-heading text-2xl font-bold">Courses</h2>
-            <p className="text-muted-foreground mt-1">
-              Catalog of courses with curriculum placements per program.
-            </p>
           </div>
           <div className="flex gap-2">
             <span
@@ -974,9 +1032,12 @@ export function CoursesView() {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All Subjects</SelectItem>
-              <SelectItem value="Major">Major</SelectItem>
-              <SelectItem value="Minor">Minor</SelectItem>
+              <SelectItem value="all">All Year Levels</SelectItem>
+              {YEAR_LEVELS.map((year) => (
+                <SelectItem key={year} value={year}>
+                  {year}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
@@ -1079,7 +1140,7 @@ export function CoursesView() {
       <ConfirmDeleteDialog
         open={deleteTarget !== null}
         title="Delete this course?"
-        description={`Are you sure you want to delete ${deleteTarget}?`}
+        description={`Courses are shared across programs, so deleting ${deleteTarget} removes it from every program it's placed in.`}
         onConfirm={() => {
           if (deleteTarget) removeCourse(deleteTarget);
           setDeleteTarget(null);

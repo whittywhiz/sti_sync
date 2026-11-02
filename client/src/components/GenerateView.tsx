@@ -5,11 +5,14 @@ import {
   AlertTriangle,
   XCircle,
   Loader2,
+  ArrowRight,
 } from "lucide-react";
+
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
 import { authFetch } from "../lib/authFetch";
 import { createPortal } from "react-dom";
+import { useSchedulingStore } from "@/store/schedulingStore";
 
 interface GeneratedClass {
   class_id: number;
@@ -32,6 +35,9 @@ interface GenerateResult {
   classes: GeneratedClass[];
   error?: string;
   capacityWarnings?: string[];
+  unassignedCount?: number;
+  labRoomIssues?: number;
+  longGaps?: number;
 }
 
 interface SummaryCounts {
@@ -53,11 +59,13 @@ export function GenerateView() {
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmCount, setConfirmCount] = useState<number | null>(null);
+  const setActiveTab = useSchedulingStore((s) => s.setActiveTab);
+
   const fetchCounts = async () => {
     setCountsLoading(true);
 
     try {
-      const res = await fetch("/api/summary");
+      const res = await authFetch("/api/summary");
       setCounts(await res.json());
     } catch (err) {
       console.error("Failed to fetch summary counts", err);
@@ -71,7 +79,7 @@ export function GenerateView() {
   const handleClick = async () => {
     setError(null);
     try {
-      const res = await fetch("/api/classes");
+      const res = await authFetch("/api/classes");
       if (!res.ok) throw new Error("check failed");
       const classes = await res.json();
       if (Array.isArray(classes) && classes.length > 0) {
@@ -95,13 +103,13 @@ export function GenerateView() {
 
   const tryGenerate = async (): Promise<void> => {
     try {
-      const res = await fetch("/api/generate-schedule", { method: "POST" });
+      const res = await authFetch("/api/generate-schedule", { method: "POST" });
       const data: GenerateResult = await res.json();
 
       if (res.status === 409) {
-        setError("Waiting for the current generation to finish…");
-        await new Promise((r) => setTimeout(r, 3000));
-        return tryGenerate();
+        setGenerating(false);
+        setError(data.error ?? "A generation is already running.");
+        return;
       }
 
       if (!res.ok || !data.success) {
@@ -124,9 +132,6 @@ export function GenerateView() {
     <div className="space-y-6">
       <div>
         <h2 className="font-heading text-2xl font-bold">Generate Schedule</h2>
-        <p className="text-muted-foreground mt-1">
-          Auto-generate a conflict-free timetable using the genetic algorithm
-        </p>
       </div>
 
       <motion.div
@@ -212,7 +217,26 @@ export function GenerateView() {
                 {result.generationsRun} generations
               </p>
             </div>
+            <button
+              type="button"
+              onClick={() => setActiveTab("timetable")}
+              aria-label="View timetable"
+              title="View timetable"
+              className="ml-auto flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-yellow-400 text-black transition-colors hover:bg-yellow-500"
+            >
+              <ArrowRight className="h-4 w-4" />
+            </button>
           </div>
+
+          {(result.unassignedCount ?? 0) > 0 && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 space-y-1">
+              <p className="text-sm font-medium">Professors still needed</p>
+              <p className="text-sm text-muted-foreground">
+                • {result.unassignedCount} classes have no professor yet. Assign
+                them from the Timetable.
+              </p>
+            </div>
+          )}
 
           {result.capacityWarnings && result.capacityWarnings.length > 0 && (
             <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 space-y-1">
@@ -222,6 +246,23 @@ export function GenerateView() {
                   • {w}
                 </p>
               ))}
+            </div>
+          )}
+
+          {((result.labRoomIssues ?? 0) > 0 || (result.longGaps ?? 0) > 0) && (
+            <div className="rounded-lg border border-border bg-secondary p-4 space-y-1">
+              <p className="text-sm font-medium">Minor notes</p>
+              {(result.labRoomIssues ?? 0) > 0 && (
+                <p className="text-sm text-muted-foreground">
+                  • {result.labRoomIssues} lab classes are not in their
+                  preferred lab room
+                </p>
+              )}
+              {(result.longGaps ?? 0) > 0 && (
+                <p className="text-sm text-muted-foreground">
+                  • {result.longGaps} long breaks between classes
+                </p>
+              )}
             </div>
           )}
         </motion.div>

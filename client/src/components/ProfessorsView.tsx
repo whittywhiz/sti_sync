@@ -19,6 +19,13 @@ import { Modal } from "@/components/Modal";
 import { toast } from "sonner";
 import { authFetch } from "../lib/authFetch";
 import { createPortal } from "react-dom";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface Employee {
   employee_id: number;
@@ -138,10 +145,15 @@ function ProfessorForm({
       return;
     }
 
-    if (slots.some((s) => s.day_id === selDayId)) {
-      setSlotError(
-        "That day already has a slot — remove it below first if you want to change it.",
-      );
+    if (
+      slots.some(
+        (s) =>
+          s.day_id === selDayId &&
+          selStart < s.end_hour &&
+          selEnd > s.start_hour,
+      )
+    ) {
+      setSlotError("This time overlaps with an existing availability.");
       return;
     }
     setSlotError(null);
@@ -150,8 +162,17 @@ function ProfessorForm({
       { day_id: selDayId, start_hour: selStart, end_hour: selEnd },
     ]);
   };
-  const removeSlot = (dayId: number) =>
-    setSlots((s) => s.filter((slot) => slot.day_id !== dayId));
+  const removeSlot = (dayId: number, startHour: number, endHour: number) =>
+    setSlots((s) =>
+      s.filter(
+        (slot) =>
+          !(
+            slot.day_id === dayId &&
+            slot.start_hour === startHour &&
+            slot.end_hour === endHour
+          ),
+      ),
+    );
 
   const handleSave = () => {
     if (!fname.trim() || !lname.trim() || !department.trim()) {
@@ -195,23 +216,21 @@ function ProfessorForm({
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-4">
-        <select
-          value={department}
-          onChange={(e) => setDepartment(e.target.value)}
-          className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-        >
-          <option value="" disabled>
-            Select department
-          </option>
-          {department && !departments.includes(department) && (
-            <option value={department}>{department}</option>
-          )}
-          {departments.map((d) => (
-            <option key={d} value={d}>
-              {d}
-            </option>
-          ))}
-        </select>
+        <Select value={department} onValueChange={setDepartment}>
+          <SelectTrigger className="w-full min-w-0">
+            <SelectValue placeholder="Select department" />
+          </SelectTrigger>
+          <SelectContent>
+            {department && !departments.includes(department) && (
+              <SelectItem value={department}>{department}</SelectItem>
+            )}
+            {departments.map((d) => (
+              <SelectItem key={d} value={d}>
+                {d}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <Input
           placeholder="Position (optional)"
           value={position}
@@ -331,10 +350,10 @@ function ProfessorForm({
         <div className="flex gap-2 mt-2 flex-wrap">
           {slots.map((s) => (
             <Badge
-              key={s.day_id}
               variant="secondary"
               className="cursor-pointer"
-              onClick={() => removeSlot(s.day_id)}
+              key={`${s.day_id}-${s.start_hour}-${s.end_hour}`}
+              onClick={() => removeSlot(s.day_id, s.start_hour, s.end_hour)}
             >
               {SHORT_DAY[dayName(s.day_id)] ?? dayName(s.day_id)}{" "}
               {formatHour12(s.start_hour)}–{formatHour12(s.end_hour)} ✕
@@ -396,7 +415,7 @@ export function ProfessorsView() {
       setAvailability(await availRes.json());
       setDays(await daysRes.json());
     } catch (err) {
-      console.error("Failed to fetch professors data", err);
+      console.error("Failed to fetch Instructor data", err);
     } finally {
       setLoading(false);
     }
@@ -462,15 +481,16 @@ export function ProfessorsView() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        toast.error(data.error ?? "Could not add the professor.");
+        toast.error(data.error ?? "Could not add the Instructor.");
         return;
       }
       await saveAvailabilityForEmployee(data.employee_id, values.slots);
+      toast.success("Instructor added successfully");
       setShowForm(false);
       fetchAll();
     } catch (err) {
-      console.error("Failed to create professor", err);
-      toast.error("Could not add the professor.");
+      console.error("Failed to create Instructor", err);
+      toast.error("Could not add the Instructor.");
     }
   };
 
@@ -502,15 +522,16 @@ export function ProfessorsView() {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        toast.error(data.error ?? "Could not update the professor.");
+        toast.error(data.error ?? "Could not update the Instructor.");
         return;
       }
       await saveAvailabilityForEmployee(editingId, values.slots);
+      toast.success("Instructor updated successfully");
       setEditingId(null);
       fetchAll();
     } catch (err) {
-      console.error("Failed to update professor", err);
-      toast.error("Could not update the professor.");
+      console.error("Failed to update Instructor", err);
+      toast.error("Could not update the Instructor.");
     }
   };
 
@@ -523,14 +544,15 @@ export function ProfessorsView() {
       const res = await fetch(`/api/employees/${id}`, { method: "DELETE" });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        toast.error(data.error || "Failed to delete professor");
+        toast.error(data.error || "Failed to delete Instructor");
         return;
       }
+      toast.success("Instructor deleted");
       setSelected((s) => s.filter((x) => x !== id));
       fetchAll();
     } catch (err) {
-      console.error("Failed to delete professor", err);
-      toast.error("Failed to delete professor");
+      console.error("Failed to delete Instructor", err);
+      toast.error("Failed to delete Instructor");
     }
   };
 
@@ -557,7 +579,7 @@ export function ProfessorsView() {
     }
     const deleted = ids.length - failed.length;
     if (deleted > 0) {
-      toast.success(`Deleted ${deleted} professor${deleted !== 1 ? "s" : ""}`);
+      toast.success(`Deleted ${deleted} instructor${deleted !== 1 ? "s" : ""}`);
     }
     if (failed.length > 0) {
       const names = employees
@@ -619,10 +641,7 @@ export function ProfessorsView() {
       <div className="sticky top-0 z-50 bg-background pt-4 pb-4 -mx-6 px-6 shadow-none border-none">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h2 className="font-heading text-2xl font-bold">Professors</h2>
-            <p className="text-muted-foreground mt-1">
-              Manage faculty and availability
-            </p>
+            <h2 className="font-heading text-2xl font-bold">Instructor</h2>
           </div>
           <div className="flex gap-2">
             <div className="inline-block [&_button]:!bg-white [&_button]:!text-gray-800 [&_button]:border [&_button]:border-gray-300 hover:[&_button]:!bg-gray-100">
@@ -637,7 +656,7 @@ export function ProfessorsView() {
                 setEditingId(null);
               }}
             >
-              <Plus className="w-4 h-4 mr-1" /> Add Professor
+              <Plus className="w-4 h-4 mr-1" /> Add Instructor
             </Button>
           </div>
         </div>
@@ -654,24 +673,32 @@ export function ProfessorsView() {
               className="pl-9"
             />
           </div>
-          <select
-            value={deptFilter}
-            onChange={(e) => setDeptFilter(e.target.value)}
-            className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+          <Select
+            value={deptFilter || "all"}
+            onValueChange={(value) =>
+              setDeptFilter(value === "all" ? "" : value)
+            }
           >
-            <option value="">All departments</option>
-            {deptOptions.map((d) => (
-              <option key={d} value={d}>
-                {d}
-              </option>
-            ))}
-            {hasUnassigned && <option value="__none__">Unassigned</option>}
-          </select>
+            <SelectTrigger className="w-[180px] shrink-0">
+              <SelectValue placeholder="All departments" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All departments</SelectItem>
+              {deptOptions.map((d) => (
+                <SelectItem key={d} value={d}>
+                  {d}
+                </SelectItem>
+              ))}
+              {hasUnassigned && (
+                <SelectItem value="__none__">Unassigned</SelectItem>
+              )}
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
       {sorted.length > 0 && (
-        <div className="glass-card rounded-xl max-h-[60vh] overflow-y-auto">
+        <div className="glass-card rounded-xl max-h-[calc(100vh-250px)] overflow-y-auto">
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-background text-xs font-semibold text-muted-foreground">
               <tr className="border-b">
@@ -688,7 +715,7 @@ export function ProfessorsView() {
                           : [],
                       )
                     }
-                    aria-label="Select all professors"
+                    aria-label="Select all Instructor"
                     className="h-4 w-4 cursor-pointer accent-primary"
                   />
                 </th>
@@ -791,15 +818,15 @@ export function ProfessorsView() {
       {!loading && sorted.length === 0 && (
         <div className="glass-card rounded-xl p-10 text-center text-sm text-muted-foreground">
           {search || deptFilter
-            ? "No professors match your search."
-            : "No professors yet. Click Add Professor to create one."}
+            ? "No Instructor match your search."
+            : "No Instructor yet. Click Add Instructor to create one."}
         </div>
       )}
 
       <Modal
         open={showForm}
         onClose={() => setShowForm(false)}
-        title="Add Professor"
+        title="Add Instructor"
         className="max-w-2xl"
       >
         <ProfessorForm
@@ -813,7 +840,7 @@ export function ProfessorsView() {
       <Modal
         open={!!editingProf}
         onClose={cancelEdit}
-        title="Edit Professor"
+        title="Edit Instructor"
         className="max-w-2xl"
       >
         {editingProf && (
@@ -843,7 +870,7 @@ export function ProfessorsView() {
 
       <ConfirmDeleteDialog
         open={deleteTarget !== null}
-        title="Delete this professor?"
+        title="Delete this Instructor?"
         description={`Are you sure you want to delete ${deleteTarget?.name}?`}
         onConfirm={() => {
           if (deleteTarget) removeProfessor(deleteTarget.employee_id);
@@ -853,8 +880,8 @@ export function ProfessorsView() {
       />
       <ConfirmDeleteDialog
         open={bulkDeleteOpen}
-        title={`Delete ${selected.length} selected professor${selected.length !== 1 ? "s" : ""}?`}
-        description="Professors who are scheduled in classes or assigned to courses can't be deleted and will stay selected."
+        title={`Delete ${selected.length} selected instructor${selected.length !== 1 ? "s" : ""}?`}
+        description="Instructor who are scheduled in classes or assigned to courses can't be deleted and will stay selected."
         onConfirm={() => {
           setBulkDeleteOpen(false);
           removeSelected();

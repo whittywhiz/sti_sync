@@ -132,7 +132,7 @@ export default function ChangePasswordButton() {
                   <div className="flex justify-end gap-2">
                     <button
                       onClick={close}
-                      className="rounded px-3 py-2 text-sm"
+                      className="rounded-md border border-input bg-background px-3 py-2 text-sm hover:!bg-accent"
                     >
                       Cancel
                     </button>
@@ -182,7 +182,7 @@ export default function ChangePasswordButton() {
                     <div className="flex gap-2">
                       <button
                         onClick={close}
-                        className="rounded px-3 py-2 text-sm"
+                        className="rounded-md border border-input bg-background px-3 py-2 text-sm hover:!bg-accent"
                       >
                         Cancel
                       </button>

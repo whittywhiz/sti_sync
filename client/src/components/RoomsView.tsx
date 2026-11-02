@@ -62,7 +62,11 @@ function RoomForm({ initial, onSave, onCancel, stacked }: RoomFormProps) {
   };
   return (
     <div className="space-y-4">
-      <div className={stacked ? "grid gap-4" : "grid grid-cols-3 gap-4"}>
+      <div
+        className={
+          stacked ? "grid grid-cols-1 gap-4" : "grid grid-cols-3 gap-4"
+        }
+      >
         <Input
           placeholder="Room Number (e.g. 301)"
           value={roomNumber}
@@ -80,15 +84,16 @@ function RoomForm({ initial, onSave, onCancel, stacked }: RoomFormProps) {
             if (e.key === "Enter") handleSave();
           }}
         />
-        <select
-          value={type}
-          onChange={(e) => setType(e.target.value)}
-          className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-        >
-          <option value="Lecture">Lecture</option>
-          <option value="Laboratory">Laboratory</option>
-          <option value="PE">PE</option>
-        </select>
+        <Select value={type} onValueChange={setType}>
+          <SelectTrigger className="w-full min-w-0">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="Lecture">Lecture</SelectItem>
+            <SelectItem value="Laboratory">Laboratory</SelectItem>
+            <SelectItem value="PE">PE</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
       {error && <p className="text-xs text-destructive">{error}</p>}
       <div className="flex gap-2">
@@ -156,6 +161,7 @@ export function RoomsView() {
         toast.error(data.error ?? "Could not add the room.");
         return;
       }
+      toast.success("Room added successfully");
       setShowForm(false);
       fetchRooms();
     } catch (err) {
@@ -182,6 +188,7 @@ export function RoomsView() {
         toast.error(data.error ?? "Could not update the room.");
         return;
       }
+      toast.success("Room updated successfully");
       setEditingId(null);
       fetchRooms();
     } catch (err) {
@@ -201,6 +208,7 @@ export function RoomsView() {
         toast.error(data.error ?? "Failed to delete room");
         return;
       }
+      toast.success("Room deleted");
       setSelected((s) => s.filter((x) => x !== id));
       fetchRooms();
     } catch (err) {
@@ -268,9 +276,6 @@ export function RoomsView() {
         <div className="flex items-center justify-between mb-4">
           <div>
             <h2 className="font-heading text-2xl font-bold">Rooms</h2>
-            <p className="text-muted-foreground mt-1">
-              Classrooms and laboratories
-            </p>
           </div>
           <Button
             onClick={() => {
@@ -295,16 +300,22 @@ export function RoomsView() {
               className="pl-9"
             />
           </div>
-          <select
-            value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value)}
-            className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+          <Select
+            value={typeFilter || "all"}
+            onValueChange={(value) =>
+              setTypeFilter(value === "all" ? "" : value)
+            }
           >
-            <option value="">All types</option>
-            <option value="Lecture">Lecture</option>
-            <option value="Laboratory">Laboratory</option>
-            <option value="PE">PE</option>
-          </select>
+            <SelectTrigger className="w-[180px] shrink-0">
+              <SelectValue placeholder="All types" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All types</SelectItem>
+              <SelectItem value="Lecture">Lecture</SelectItem>
+              <SelectItem value="Laboratory">Laboratory</SelectItem>
+              <SelectItem value="PE">PE</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
@@ -322,7 +333,7 @@ export function RoomsView() {
       )}
 
       {sorted.length > 0 && (
-        <div className="glass-card rounded-xl max-h-[60vh] overflow-y-auto">
+        <div className="glass-card rounded-xl max-h-[calc(100vh-250px)] overflow-y-auto">
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-background text-xs font-semibold text-muted-foreground">
               <tr className="border-b">

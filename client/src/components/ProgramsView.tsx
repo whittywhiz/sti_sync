@@ -54,18 +54,18 @@ function ProgForm({
   return (
     <div className="space-y-4">
       <Input
-        placeholder="Program name (e.g. BS Information Technology)"
-        value={description}
-        onChange={(e) => setDescription(e.target.value)}
+        placeholder="Code (e.g. BSIT)"
+        value={code}
+        onChange={(e) => setCode(e.target.value)}
+        maxLength={10}
         onKeyDown={(e) => {
           if (e.key === "Enter") handleSave();
         }}
       />
       <Input
-        placeholder="Code (e.g. BSIT)"
-        value={code}
-        onChange={(e) => setCode(e.target.value)}
-        maxLength={10}
+        placeholder="Program name (e.g. BS Information Technology)"
+        value={description}
+        onChange={(e) => setDescription(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === "Enter") handleSave();
         }}
@@ -156,6 +156,7 @@ export function ProgramsView() {
         toast.error(data.error ?? "Failed to create program");
         return;
       }
+      toast.success("Program added successfully");
       setShowForm(false);
       fetchAll();
     } catch (err) {
@@ -203,6 +204,7 @@ export function ProgramsView() {
         toast.error(data.error ?? "Failed to update program");
         return;
       }
+      toast.success("Program updated successfully");
       setEditingId(null);
       fetchAll();
     } catch (err) {
@@ -219,6 +221,7 @@ export function ProgramsView() {
         toast.error(data.error || "Failed to delete program");
         return;
       }
+      toast.success("Program deleted");
       setSelected((s) => s.filter((x) => x !== id));
       fetchAll();
     } catch (err) {
@@ -282,9 +285,6 @@ export function ProgramsView() {
         <div className="flex items-center justify-between mb-4">
           <div>
             <h2 className="font-heading text-2xl font-bold">Programs</h2>
-            <p className="text-muted-foreground mt-1">
-              Academic programs offered:
-            </p>
           </div>
           <Button
             onClick={() => {
@@ -326,7 +326,7 @@ export function ProgramsView() {
       )}
 
       {sorted.length > 0 && (
-        <div className="glass-card rounded-xl max-h-[60vh] overflow-y-auto">
+        <div className="glass-card rounded-xl max-h-[calc(100vh-250px)] overflow-y-auto">
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-background text-xs font-semibold text-muted-foreground">
               <tr className="border-b">

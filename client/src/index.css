@@ -112,3 +112,10 @@ body,
 
 @layer utilities {
 }
+[data-sonner-toast] {
+  width: fit-content !important;
+  min-width: 0 !important;
+  padding-right: 12px !important;
+  left: auto !important;
+  right: 0 !important;
+}

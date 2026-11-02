@@ -9,16 +9,39 @@ interface WorkerInput {
   maxGenerations?: number;
 }
 
+const MAX_ATTEMPTS = 3;
+
 function main() {
   const { schedulingInput, populationSize, maxGenerations } =
     workerData as WorkerInput;
 
   const requirements = buildRequirements(schedulingInput);
+  const t0 = Date.now();
 
-  const result = runGA(requirements, schedulingInput, {
+  let result = runGA(requirements, schedulingInput, {
     populationSize,
     maxGenerations,
   });
+
+  for (
+    let attempt = 2;
+    attempt <= MAX_ATTEMPTS && !result.feasible;
+    attempt++
+  ) {
+    console.log(
+      `Attempt ${attempt - 1} infeasible, retrying (${attempt}/${MAX_ATTEMPTS})...`,
+    );
+    const budget = 150_000 - (Date.now() - t0) - 20_000;
+    if (budget < 10_000) break;
+    const next = runGA(requirements, schedulingInput, {
+      populationSize,
+      maxGenerations,
+      timeBudgetMs: budget,
+    });
+    if (next.feasible || next.hardViolationCount < result.hardViolationCount) {
+      result = next;
+    }
+  }
 
   if (!result.feasible) {
     const { violations } = scoreCandidate(result.best, schedulingInput);
@@ -28,16 +51,26 @@ function main() {
         counts[v.type] = (counts[v.type] ?? 0) + 1;
       }
     }
+    const LABELS: Record<string, string> = {
+      ROOM_CONFLICT: "rooms double-booked",
+      EMPLOYEE_CONFLICT: "professors double-booked",
+      SECTION_CONFLICT: "sections with overlapping classes",
+      EMPLOYEE_UNAVAILABLE:
+        "professors scheduled outside their available times",
+      ROOM_TYPE_MISMATCH: "classes in the wrong type of room",
+      EMPLOYEE_MAX_HOURS_EXCEEDED: "professors over their maximum hours",
+      SAME_COURSE_SAME_DAY: "courses with both sessions on the same day",
+    };
     const summary = Object.entries(counts)
-      .map(([type, n]) => `${type} x${n}`)
+      .map(([type, n]) => `${n} ${LABELS[type] ?? type}`)
       .join(", ");
-
     parentPort?.postMessage({
       success: false,
-      error: `GA could not find a conflict-free schedule after ${result.generationsRun} generations. Remaining hard violations: ${summary}. Try again, or check for infeasible data.`,
+      error: `Could not build a conflict-free schedule. Problems left: ${summary}. Try again, or check the professors' availability and room data.`,
     });
     return;
   }
+
   const { violations } = scoreCandidate(result.best, schedulingInput);
   const capacityWarnings = Array.from(
     new Set(

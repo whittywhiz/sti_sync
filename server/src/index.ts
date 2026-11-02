@@ -3,7 +3,8 @@ import cors from "cors";
 import jwt from "jsonwebtoken";
 import { pool } from "./db";
 import { buildSchedulingInputFromDB } from "./scheduling-data";
-import { buildRequirements } from "./ga";
+import { buildRequirements, checkLabCapacity } from "./ga";
+import { evaluateFitness } from "./csp";
 import { runGAInWorker } from "./run-ga-worker";
 import bcrypt from "bcrypt";
 import { randomInt } from "crypto";
@@ -14,9 +15,11 @@ import type { PoolClient } from "pg";
 import { cacheMiddleware, clearCache } from "./cache";
 
 dotenv.config();
-
-export const JWT_SECRET =
-  (process.env as any).JWT_SECRET || "stisync-secure-secret-key-2026";
+const envSecret = (process.env as any).JWT_SECRET as string | undefined;
+if (!envSecret) {
+  throw new Error("JWT_SECRET is missing in server/.env");
+}
+export const JWT_SECRET: string = envSecret;
 
 const PUBLIC_ROUTES = [
   "/login",
@@ -132,11 +135,19 @@ app.post("/employees/import", upload.single("file"), async (req, res) => {
   const keyOf = (r: any) =>
     `${String(r.lname || "").trim()}|${String(r.fname || "").trim()}|${String(r.mname || "").trim()}`.toLowerCase();
   const byEmp = new Map<string, any[]>();
+
   for (const row of rows) {
     if (!row.lname || !row.fname) continue;
     const key = keyOf(row);
     if (!byEmp.has(key)) byEmp.set(key, []);
     byEmp.get(key)!.push(row);
+  }
+
+  if (byEmp.size === 0) {
+    return res.status(400).json({
+      error:
+        "No professors found in this file. It needs the columns lname and fname (plus department, position, max_hours_per_day, max_hours_per_week, availability_day, availability_start, availability_end). If this is a courses file, import it on the Courses page.",
+    });
   }
 
   const inconsistent: string[] = [];
@@ -339,6 +350,13 @@ app.post("/courses/import", upload.single("file"), async (req, res) => {
     byCode.get(row.course_code)!.push(row);
   }
 
+  if (byCode.size === 0) {
+    return res.status(400).json({
+      error:
+        "No courses found in this file. It needs the columns course_code, course_description, course_type, program, year_level and term. If this is a professors file, import it on the Professors page.",
+    });
+  }
+
   const courseTypeResult = await pool.query(
     `SELECT DISTINCT ON (course_type_description)
             course_type_id, course_type_description
@@ -421,6 +439,7 @@ app.post("/courses/import", upload.single("file"), async (req, res) => {
     }
 
     await client.query("COMMIT");
+    console.log("insert done, sending response");
     res.json({ success: true, inserted, curriculumInserted });
   } catch (err: any) {
     await client.query("ROLLBACK");
@@ -965,11 +984,12 @@ app.get("/classes", async (req: Request, res: Response) => {
         c.schedule_id,
         c.start_time,
         c.end_time,
-        e.name AS professor,
+               COALESCE(e.name, 'Unassigned') AS professor,
         r.room_number AS room,
         sec.section_id,
-        sec.year_level,
+               sec.year_level,
         sec.section_name,
+        sec.program_id,
         p.description AS program,
         p.code,
         co.course_code,
@@ -978,7 +998,7 @@ app.get("/classes", async (req: Request, res: Response) => {
         s.academic_year,
         s.school_term
       FROM class c
-      JOIN employee e ON c.employee_id = e.employee_id
+            LEFT JOIN employee e ON c.employee_id = e.employee_id
       JOIN room r ON c.room_id = r.room_id
       JOIN section sec ON c.section_id = sec.section_id
       JOIN program p ON sec.program_id = p.program_id
@@ -1605,6 +1625,99 @@ app.put("/classes/:id", async (req: Request, res: Response) => {
   }
 });
 
+const LOAD_LIMIT = 9;
+
+async function eligibleFor(classId: string) {
+  const c = (
+    await pool.query(
+      `SELECT day_id, start_time, end_time, schedule_id,
+              EXTRACT(EPOCH FROM (end_time - start_time)) / 3600 AS dur
+       FROM class WHERE class_id = $1`,
+      [classId],
+    )
+  ).rows[0];
+  if (!c) return null;
+  const { rows } = await pool.query(
+    `SELECT e.employee_id, e.name,
+       COALESCE((SELECT SUM(EXTRACT(EPOCH FROM (k.end_time - k.start_time)) / 3600)
+                 FROM class k
+                                  WHERE k.employee_id = e.employee_id
+                   AND k.schedule_id = $4 AND k.day_id = $1
+                   AND k.class_id <> $5), 0)::float AS load_hours
+     FROM employee e
+     WHERE EXISTS (SELECT 1 FROM availability a
+                   WHERE a.employee_id = e.employee_id AND a.day_id = $1
+                     AND a.start_time <= $2 AND a.end_time >= $3)
+       AND NOT EXISTS (SELECT 1 FROM class k
+                   WHERE k.employee_id = e.employee_id AND k.schedule_id = $4
+                     AND k.day_id = $1 AND k.class_id <> $5
+                     AND k.start_time < $3 AND k.end_time > $2)
+     ORDER BY e.name`,
+    [c.day_id, c.start_time, c.end_time, c.schedule_id, classId],
+  );
+  const dur = Number(c.dur);
+  return rows.map((r: any) => ({
+    employee_id: r.employee_id,
+    name: r.name,
+    load_hours: r.load_hours,
+    would_be: r.load_hours + dur,
+    exceeds: r.load_hours + dur > LOAD_LIMIT,
+  }));
+}
+
+app.get(
+  "/classes/:id/eligible-employees",
+  async (req: Request, res: Response) => {
+    try {
+      const list = await eligibleFor(String(req.params.id));
+      if (!list) return res.status(404).json({ error: "Class not found" });
+      res.json(list);
+    } catch (err: any) {
+      console.error(err);
+      res.status(500).json({ error: "Failed to load instructors" });
+    }
+  },
+);
+
+app.put("/classes/:id/employee", async (req: Request, res: Response) => {
+  const id = String(req.params.id);
+  const { employee_id, confirm_overload } = req.body;
+  try {
+    if (employee_id !== null) {
+      const list = await eligibleFor(id);
+      if (!list) return res.status(404).json({ error: "Class not found" });
+      const pick = list.find((x: any) => x.employee_id === employee_id);
+      if (!pick) {
+        return res.status(400).json({
+          error: "Instructor is not available at this time or has a conflict.",
+        });
+      }
+      if (pick.exceeds && !confirm_overload) {
+        return res
+          .status(409)
+          .json({ needsConfirm: true, total: pick.would_be });
+      }
+    }
+    await pool.query("UPDATE class SET employee_id = $1 WHERE class_id = $2", [
+      employee_id,
+      id,
+    ]);
+    if (employee_id !== null) {
+      await pool.query(
+        `INSERT INTO course_employee (course_code, employee_id)
+         SELECT c.course_code, $1 FROM class c
+         WHERE c.class_id = $2
+         ON CONFLICT DO NOTHING`,
+        [employee_id, id],
+      );
+    }
+    res.json({ success: true });
+  } catch (err: any) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.delete("/rooms/:id", async (req: Request, res: Response) => {
   const { id } = req.params;
   try {
@@ -1873,8 +1986,14 @@ app.post("/generate-schedule", async (req: Request, res: Response) => {
       });
     }
 
+    const problem = checkLabCapacity(requirements, input); // <- new
+    if (problem) {
+      return res.status(400).json({ success: false, error: problem });
+    }
     const gaStart = Date.now();
     const gaResult = await runGAInWorker(input, 50, 200);
+    console.log("GA done, inserting...");
+    console.time("db insert");
     console.log(
       `GA took ${((Date.now() - gaStart) / 1000).toFixed(1)}s, ${gaResult.generationsRun} generations`,
     );
@@ -1887,26 +2006,26 @@ app.post("/generate-schedule", async (req: Request, res: Response) => {
       scheduleId,
     ]);
 
-    const insertedClasses = [];
-    for (const assignment of gaResult.best.assignments) {
-      const insertResult = await client.query(
-        `INSERT INTO class (start_time, end_time, employee_id, room_id, section_id, course_code, day_id, schedule_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-        [
-          assignment.start_time,
-          assignment.end_time,
-          assignment.employee_id,
-          assignment.room_id,
-          assignment.section_id,
-          assignment.course_code,
-          assignment.day_id,
-          scheduleId,
-        ],
-      );
-      insertedClasses.push(insertResult.rows[0]);
-    }
+    const a = gaResult.best.assignments;
+    const insertResult = await client.query(
+      `INSERT INTO class (start_time, end_time, employee_id, room_id, section_id, course_code, day_id, schedule_id)
+   SELECT * FROM unnest($1::time[], $2::time[], $3::int[], $4::int[], $5::int[], $6::varchar[], $7::int[], $8::int[])
+   RETURNING *`,
+      [
+        a.map((x) => x.start_time),
+        a.map((x) => x.end_time),
+        a.map((x) => x.employee_id),
+        a.map((x) => x.room_id),
+        a.map((x) => x.section_id),
+        a.map((x) => x.course_code),
+        a.map((x) => x.day_id),
+        a.map(() => scheduleId),
+      ],
+    );
+    const insertedClasses = insertResult.rows;
 
     await client.query("COMMIT");
+    console.timeEnd("db insert");
     const roomById = new Map(input.rooms.map((r) => [r.room_id, r]));
     const studentsBySection = new Map(
       input.sections.map((s) => [s.section_id, s.number_of_students]),
@@ -1943,16 +2062,25 @@ app.post("/generate-schedule", async (req: Request, res: Response) => {
       });
     }
 
+    const { violations } = evaluateFitness(a, input);
     const responsePayload = {
       success: true,
       fitness: gaResult.best.fitness,
-      isConflictFree: gaResult.best.fitness === 0,
+      isConflictFree: gaResult.feasible,
       generationsRun: gaResult.generationsRun,
       classesCreated: insertedClasses.length,
       classes: insertedClasses,
+
       capacityWarnings,
+      unassignedCount: a.filter((x) => x.employee_id === null).length,
+      labRoomIssues: violations.filter(
+        (v) => v.type === "HOME_LAB_PREFERENCE_UNMET",
+      ).length,
+      longGaps: violations.filter((v) => v.type === "LONG_VACANT_GAP").length,
     };
     lastGenerateResult = responsePayload;
+
+    console.log("sending response");
     res.json(responsePayload);
   } catch (err) {
     if (client) await client.query("ROLLBACK").catch(() => {});

@@ -88,37 +88,45 @@ export function evaluateFitness(
   const startMin = assignments.map((a) => toMinutes(a.start_time));
   const endMin = assignments.map((a) => toMinutes(a.end_time));
 
-  for (let i = 0; i < assignments.length; i++) {
-    for (let j = i + 1; j < assignments.length; j++) {
-      const a = assignments[i]!;
-      const b = assignments[j]!;
+  const indicesByDay = new Map<number, number[]>();
+  assignments.forEach((a, idx) => {
+    const list = indicesByDay.get(a.day_id);
+    if (list) list.push(idx);
+    else indicesByDay.set(a.day_id, [idx]);
+  });
+  for (const idxs of indicesByDay.values()) {
+    for (let p = 0; p < idxs.length; p++) {
+      for (let q = p + 1; q < idxs.length; q++) {
+        const i = idxs[p]!;
+        const j = idxs[q]!;
+        const a = assignments[i]!;
+        const b = assignments[j]!;
 
-      if (a.day_id !== b.day_id) continue;
+        if (!(startMin[i]! < endMin[j]! && startMin[j]! < endMin[i]!)) continue;
 
-      if (!(startMin[i]! < endMin[j]! && startMin[j]! < endMin[i]!)) continue;
+        if (a.room_id === b.room_id) {
+          violations.push({
+            type: "ROOM_CONFLICT",
+            message: `Room ${a.room_id} double-booked on day ${a.day_id} between (${a.course_code}) and (${b.course_code})`,
+            weight: WEIGHTS.ROOM_CONFLICT,
+          });
+        }
 
-      if (a.room_id === b.room_id) {
-        violations.push({
-          type: "ROOM_CONFLICT",
-          message: `Room ${a.room_id} double-booked on day ${a.day_id} between (${a.course_code}) and (${b.course_code})`,
-          weight: WEIGHTS.ROOM_CONFLICT,
-        });
-      }
+        if (a.employee_id !== null && a.employee_id === b.employee_id) {
+          violations.push({
+            type: "EMPLOYEE_CONFLICT",
+            message: `Employee ${a.employee_id} double-booked on day ${a.day_id} between (${a.course_code}) and (${b.course_code})`,
+            weight: WEIGHTS.EMPLOYEE_CONFLICT,
+          });
+        }
 
-      if (a.employee_id === b.employee_id) {
-        violations.push({
-          type: "EMPLOYEE_CONFLICT",
-          message: `Employee ${a.employee_id} double-booked on day ${a.day_id} between (${a.course_code}) and (${b.course_code})`,
-          weight: WEIGHTS.EMPLOYEE_CONFLICT,
-        });
-      }
-
-      if (a.section_id === b.section_id) {
-        violations.push({
-          type: "SECTION_CONFLICT",
-          message: `Section ${a.section_id} double-booked on day ${a.day_id} between (${a.course_code}) and (${b.course_code})`,
-          weight: WEIGHTS.SECTION_CONFLICT,
-        });
+        if (a.section_id === b.section_id) {
+          violations.push({
+            type: "SECTION_CONFLICT",
+            message: `Section ${a.section_id} double-booked on day ${a.day_id} between (${a.course_code}) and (${b.course_code})`,
+            weight: WEIGHTS.SECTION_CONFLICT,
+          });
+        }
       }
     }
   }
@@ -156,13 +164,16 @@ export function evaluateFitness(
         : undefined;
       if (
         courseType === "laboratory" &&
-        assignment.session_number === 2 &&
+        assignment.session_number === 1 &&
         homeRoomNumbers &&
-        !homeRoomNumbers.includes(room.room_number)
+        !homeRoomNumbers.some(
+          (n) =>
+            n.toLowerCase().trim() === room.room_number.toLowerCase().trim(),
+        )
       ) {
         violations.push({
           type: "HOME_LAB_PREFERENCE_UNMET",
-          message: `Session 2 of ${assignment.course_code} (Section ${assignment.section_id}) assigned to Room ${room.room_number} instead of a home lab (${homeRoomNumbers.join(", ")})`,
+          message: `Session 1 of ${assignment.course_code} (Section ${assignment.section_id}) assigned to Room ${room.room_number} instead of a home lab (${homeRoomNumbers.join(", ")})`,
           weight: WEIGHTS.HOME_LAB_PREFERENCE_UNMET,
         });
       }
@@ -179,7 +190,7 @@ export function evaluateFitness(
         });
       }
     }
-
+    if (assignment.employee_id === null) continue;
     const key = `${assignment.employee_id}-${assignment.day_id}`;
     const employeeAvailability = availabilityByEmployeeDay.get(key) || [];
 
@@ -208,6 +219,7 @@ export function evaluateFitness(
   const hoursByEmployeeWeek = new Map<number, number>();
 
   assignments.forEach((assignment, i) => {
+    if (assignment.employee_id === null) return;
     const dayKey = `${assignment.employee_id}-${assignment.day_id}`;
     const hours = (endMin[i]! - startMin[i]!) / 60;
     hoursByEmployeeDay.set(

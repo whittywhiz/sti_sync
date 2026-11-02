@@ -169,7 +169,11 @@ function SectionForm({
         <Input
           placeholder="Section Letter (e.g. A)"
           value={sectionName}
-          onChange={(e) => setSectionName(e.target.value)}
+          onChange={(e) =>
+            setSectionName(
+              e.target.value.replace(/[^a-zA-Z]/g, "").toUpperCase(),
+            )
+          }
           maxLength={20}
         />
         <Input
@@ -318,6 +322,8 @@ export function SectionsView() {
         setErrorModal(data.error || "Failed to create section");
         return;
       }
+
+      toast.success("Section added successfully");
       setShowForm(false);
       fetchAll();
     } catch (err) {
@@ -344,6 +350,7 @@ export function SectionsView() {
         setErrorModal(data.error || "Failed to update section");
         return;
       }
+      toast.success("Section updated successfully");
       setEditingId(null);
       fetchAll();
     } catch (err) {
@@ -360,6 +367,7 @@ export function SectionsView() {
         toast.error(data.error || "Failed to delete section");
         return;
       }
+      toast.success("Section deleted");
       setSelected((s) => s.filter((x) => x !== id));
       fetchAll();
     } catch (err) {
@@ -568,9 +576,6 @@ export function SectionsView() {
         <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
           <div>
             <h2 className="font-heading text-2xl font-bold">Sections</h2>
-            <p className="text-muted-foreground mt-1">
-              Student groups by program & year level
-            </p>
           </div>
           <div className="flex items-center gap-3">
             <div className="relative" ref={dropdownRef}>
@@ -632,7 +637,8 @@ export function SectionsView() {
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              archiveSemester(s, isActive);
+                              setDropdownOpen(false);
+                              setArchiveTarget({ s, isActive });
                             }}
                             className="text-xs px-2 py-1 rounded text-gray-700 hover:bg-red-100 hover:text-red-700 transition-colors"
                           >
@@ -717,7 +723,7 @@ export function SectionsView() {
       )}
 
       {sorted.length > 0 && (
-        <div className="glass-card rounded-xl max-h-[60vh] overflow-y-auto">
+        <div className="glass-card rounded-xl max-h-[calc(100vh-250px)] overflow-y-auto">
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-background text-xs font-semibold text-muted-foreground">
               <tr className="border-b">

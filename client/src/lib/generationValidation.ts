@@ -46,7 +46,7 @@ export function validateGeneration(input: ValidateInput): ValidationIssue[] {
     if (!neededCourseIds.has(course.id)) continue;
     if (!course.professorIds || course.professorIds.length === 0) {
       issues.push({
-        severity: "error",
+        severity: "warning",
         message: `Course ${course.code} has no assigned professor.`,
       });
     }
