@@ -217,15 +217,24 @@ const SLOT_GRANULARITY_MIN = 30;
 const EMPLOYEE_ATTEMPT_LIMIT = 6;
 const DAY_ATTEMPT_LIMIT = 8;
 
+const BACKUP_ROOM_NUMBERS = new Set(["gym b", "gym c", "gym d"]);
+const isBackupRoom = (r: { room_number: string }) =>
+  BACKUP_ROOM_NUMBERS.has(r.room_number.toLowerCase().trim());
+
 function minutesToTime(totalMinutes: number): string {
   const h = Math.floor(totalMinutes / 60);
   const m = totalMinutes % 60;
   return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}`;
 }
 
+const tmCache = new Map<string, number>();
 function timeToMinutes(time: string): number {
-  const parts = time.split(":").map(Number);
-  return (parts[0] ?? 0) * 60 + (parts[1] ?? 0);
+  let v = tmCache.get(time);
+  if (v === undefined) {
+    const p = time.split(":").map(Number);
+    tmCache.set(time, (v = (p[0] ?? 0) * 60 + (p[1] ?? 0)));
+  }
+  return v;
 }
 
 function timeRangesOverlap(
@@ -375,6 +384,7 @@ function addInterval(
   if (!map.has(key)) map.set(key, []);
   map.get(key)!.push(interval);
 }
+const COMPUTER_LAB_COURSE_CODES = new Set<string>(["HOSP1019", "STIC1003"]);
 
 function roomPoolForRequirement(
   req: SchedulingRequirement,
@@ -383,6 +393,16 @@ function roomPoolForRequirement(
   sectionProgramId: number,
 ): SchedulingInput["rooms"] {
   const isLab = courseType === "laboratory";
+
+  if (
+    req.session_number === 1 &&
+    COMPUTER_LAB_COURSE_CODES.has(req.course_code)
+  ) {
+    const computerLabs = input.rooms.filter(
+      (r) => r.type?.toLowerCase() === "laboratory" && r.program_id == null,
+    );
+    if (computerLabs.length > 0) return computerLabs;
+  }
 
   const filterReserved = (rooms: SchedulingInput["rooms"]) =>
     rooms.filter(
@@ -395,7 +415,8 @@ function roomPoolForRequirement(
   if (
     reservedForSection.length > 0 &&
     (isLab || req.prefers_lab_room) &&
-    req.session_number !== 2
+    req.course_code.startsWith("HOSP") &&
+    !COMPUTER_LAB_COURSE_CODES.has(req.course_code)
   ) {
     return reservedForSection;
   }
@@ -410,12 +431,7 @@ function roomPoolForRequirement(
           r.type?.toLowerCase() === "lecture" &&
           (r.program_id == null || r.program_id === sectionProgramId),
       );
-      const combined = [
-        ...reservedForSection,
-        ...filterReserved(labRooms),
-        ...lectureRooms,
-      ];
-      return Array.from(new Map(combined.map((r) => [r.room_id, r])).values());
+      if (lectureRooms.length > 0) return lectureRooms;
     }
     // Session 1: strict programs (BMMA, BACOMM) may only use their home lab
     const home = PROGRAM_HOME_LAB_ROOM_NUMBERS[sectionProgramId];
@@ -462,7 +478,6 @@ export function checkLabCapacity(
     { rooms: Map<number, string>; hours: number }
   >();
   for (const req of requirements) {
-    if (req.session_number !== 1) continue;
     const type = (
       courseMap.get(req.course_code)?.course_type_description ?? ""
     ).toLowerCase();
@@ -471,6 +486,7 @@ export function checkLabCapacity(
     const labs = roomPoolForRequirement(req, type, input, pid).filter(
       (r) => r.type?.toLowerCase() === "laboratory",
     );
+    if (req.session_number !== 1 && labs.length === 0) continue;
     const key = labs
       .map((r) => r.room_id)
       .sort((a, b) => a - b)
@@ -495,7 +511,7 @@ export function checkLabCapacity(
     });
     const cap = rooms.size * hoursPerRoom;
     if (need > cap)
-      return `Lab demand ${need}h exceeds capacity ${cap}h for: ${[...rooms.values()].join(", ") || "no lab room"}. Add a lab room or change course type. `;
+      return `Laboratory demand ${need}h exceeds capacity ${cap}h for: ${[...rooms.values()].join(", ") || "no lab room"}.`;
   }
   return null;
 }
@@ -531,7 +547,10 @@ function pickRoomForSection(
   students: number,
 ): SchedulingInput["rooms"][number] {
   const fitting = rooms.filter((r) => r.capacity >= students);
-  if (fitting.length > 0) return randomFrom(fitting);
+  if (fitting.length > 0) {
+    const primary = fitting.filter((r) => !isBackupRoom(r));
+    return randomFrom(primary.length > 0 ? primary : fitting);
+  }
   return rooms.reduce((a, b) => (b.capacity > a.capacity ? b : a));
 }
 
@@ -553,8 +572,14 @@ export function generateRandomCandidate(
 
   const assignments: ClassAssignment[] = [];
 
+  const isLabSession1 = (r: SchedulingRequirement) =>
+    (
+      courseMap.get(r.course_code)?.course_type_description ?? ""
+    ).toLowerCase() === "laboratory" && r.session_number === 1;
+
   const ordered = [...requirements].sort(
     (a, b) =>
+      Number(isLabSession1(b)) - Number(isLabSession1(a)) ||
       b.session_duration_hours - a.session_duration_hours ||
       Number(!!b.prefers_lab_room) - Number(!!a.prefers_lab_room),
   );
@@ -606,10 +631,15 @@ export function generateRandomCandidate(
         }
       }
       const homeOpts = options.filter((o) => isHome(o.room));
-      const cands = shuffle(homeOpts.length > 0 ? homeOpts : options);
+      const cands =
+        homeOpts.length > 0
+          ? [...homeOpts, ...options.filter((o) => !isHome(o.room))]
+          : options;
+
       const eligible = eligibleByCourse.get(req.course_code);
       let found = false;
-      search: for (const o of cands.slice(0, 30)) {
+
+      search: for (const o of cands) {
         for (const emp of eligible ?? []) {
           const key = `${emp.employee_id}-${o.day.day_id}`;
           const starts = getConflictFreeStarts(
@@ -773,19 +803,25 @@ export function generateRandomCandidate(
     const isMandatoryLabSession =
       courseType === "laboratory" && req.session_number === 1;
 
-    const roomsToPickFrom = isMandatoryLabSession
-      ? freeHomeLabs.length > 0
-        ? freeHomeLabs
-        : freeLabRooms.length > 0
-          ? freeLabRooms
-          : roomPool.filter((r) => r.type?.toLowerCase() === "laboratory")
-      : freeHomeLabs.length > 0
-        ? freeHomeLabs
-        : freeLabRooms.length > 0
-          ? freeLabRooms
-          : freeRooms.length > 0
-            ? freeRooms
-            : roomPool;
+    const isLabSession2 =
+      courseType === "laboratory" && req.session_number === 2;
+    const roomsToPickFrom = isLabSession2
+      ? freeRooms.length > 0
+        ? freeRooms
+        : roomPool
+      : isMandatoryLabSession
+        ? freeHomeLabs.length > 0
+          ? freeHomeLabs
+          : freeLabRooms.length > 0
+            ? freeLabRooms
+            : roomPool.filter((r) => r.type?.toLowerCase() === "laboratory")
+        : freeHomeLabs.length > 0
+          ? freeHomeLabs
+          : freeLabRooms.length > 0
+            ? freeLabRooms
+            : freeRooms.length > 0
+              ? freeRooms
+              : roomPool;
 
     const room =
       labRoom ??
@@ -881,7 +917,7 @@ export function crossover(
 
 const MUTATION_RATE = 0.015;
 const ELITE_COUNT = 3;
-const CROSSOVER_RATE = 0;
+const CROSSOVER_RATE = 0.1;
 
 function shuffle<T>(arr: T[]): T[] {
   const a = [...arr];
@@ -1356,9 +1392,8 @@ export function mutate(
       }
     },
   );
-
   const mutated: Candidate = { assignments: mutatedAssignments, fitness: 0 };
-  scoreCandidate(mutated, input);
+  scoreCandidate(mutated, input, false);
   return mutated;
 }
 
@@ -1427,6 +1462,43 @@ function repairCandidate(
     return true;
   };
 
+  const deadline = Date.now() + 20_000;
+  const freeSpot = (idx: number): ClassAssignment | null => {
+    if (Date.now() > deadline) return null;
+    const c = A[idx]!;
+    const course = courseMap.get(c.course_code);
+    const section = sectionMap.get(c.section_id);
+    const pool = roomPoolForRequirement(
+      {
+        section_id: c.section_id,
+        course_code: c.course_code,
+        session_number: c.session_number,
+        session_duration_hours: c.session_duration_hours,
+      },
+      (course?.course_type_description ?? "").toLowerCase(),
+      input,
+      section?.program_id ?? 0,
+    );
+    const d = Math.round(c.session_duration_hours * 60);
+    for (const day of shuffle(input.days))
+      for (
+        let st = WORKING_DAY_START_MIN;
+        st + d <= WORKING_DAY_END_MIN;
+        st += SLOT_GRANULARITY_MIN
+      )
+        for (const room of pool) {
+          const cand = {
+            ...c,
+            day_id: day.day_id,
+            room_id: room.room_id,
+            start_time: minutesToTime(st),
+            end_time: minutesToTime(st + d),
+          };
+          if (valid(cand, idx)) return cand;
+        }
+    return null;
+  };
+
   const bad = A.map((a, i) => (valid(a, i) ? -1 : i)).filter((i) => i >= 0);
   if (bad.length === 0) return;
 
@@ -1477,6 +1549,55 @@ function repairCandidate(
           }
         }
         if (options.length === 0) {
+          let tries = 0;
+          eject: for (const day of shuffle(input.days))
+            for (
+              let st = WORKING_DAY_START_MIN;
+              st + dur <= WORKING_DAY_END_MIN;
+              st += SLOT_GRANULARITY_MIN
+            )
+              for (const room of roomPool) {
+                const blockers: number[] = [];
+                for (let j = 0; j < A.length; j++) {
+                  const o = A[j]!;
+                  if (
+                    j !== i &&
+                    o.day_id === day.day_id &&
+                    o.room_id === room.room_id &&
+                    timeRangesOverlap(
+                      st,
+                      st + dur,
+                      timeToMinutes(o.start_time),
+                      timeToMinutes(o.end_time),
+                    )
+                  )
+                    blockers.push(j);
+                }
+                if (blockers.length !== 1) continue;
+                const j = blockers[0]!;
+                const oldJ = A[j]!;
+                if (oldJ.employee_id !== null) continue;
+                if (++tries > 40) break eject;
+                const cand = {
+                  ...cur,
+                  employee_id: null,
+                  day_id: day.day_id,
+                  room_id: room.room_id,
+                  start_time: minutesToTime(st),
+                  end_time: minutesToTime(st + dur),
+                };
+                A[i] = cand;
+                const alt = freeSpot(j);
+                if (alt) {
+                  A[j] = alt;
+                  if (valid(cand, i)) {
+                    fixed++;
+                    break eject;
+                  }
+                  A[j] = oldJ;
+                }
+                A[i] = cur;
+              }
           continue;
         }
         const students = section?.number_of_students ?? 0;
@@ -1564,6 +1685,559 @@ export interface GAResult {
   hardViolationCount: number;
 }
 
+//
+function compactCandidate(candidate: Candidate, input: SchedulingInput): void {
+  const A = candidate.assignments;
+  const availability = buildAvailabilityByEmployeeDay(input);
+  const courseMap = new Map(input.courses.map((c) => [c.course_code, c]));
+  const sectionMap = new Map(input.sections.map((s) => [s.section_id, s]));
+  const roomMap = new Map(input.rooms.map((r) => [r.room_id, r]));
+
+  const canPlace = (
+    i: number,
+    s: number,
+    e: number,
+    roomId: number,
+  ): boolean => {
+    const a = A[i]!;
+    if (a.employee_id !== null) {
+      const windows = availability.get(`${a.employee_id}-${a.day_id}`) ?? [];
+      if (
+        !windows.some(
+          (w) =>
+            timeToMinutes(w.start_time) <= s && e <= timeToMinutes(w.end_time),
+        )
+      )
+        return false;
+    }
+    for (let j = 0; j < A.length; j++) {
+      if (j === i) continue;
+      const o = A[j]!;
+      if (o.day_id !== a.day_id) continue;
+      if (
+        !timeRangesOverlap(
+          s,
+          e,
+          timeToMinutes(o.start_time),
+          timeToMinutes(o.end_time),
+        )
+      )
+        continue;
+      if (
+        o.section_id === a.section_id ||
+        o.room_id === roomId ||
+        (a.employee_id !== null && o.employee_id === a.employee_id)
+      )
+        return false;
+    }
+    return true;
+  };
+
+  // current room first, then other same-type rooms (labs are never switched)
+  const roomOptions = (i: number): number[] => {
+    const a = A[i]!;
+    const cur = roomMap.get(a.room_id);
+    if (!cur || cur.type?.toLowerCase() === "laboratory") return [a.room_id];
+    const course = courseMap.get(a.course_code);
+    const section = sectionMap.get(a.section_id);
+    const pool = roomPoolForRequirement(
+      {
+        section_id: a.section_id,
+        course_code: a.course_code,
+        session_number: a.session_number,
+        session_duration_hours: a.session_duration_hours,
+      },
+      (course?.course_type_description ?? "").toLowerCase(),
+      input,
+      section?.program_id ?? 0,
+    );
+    const students = section?.number_of_students ?? 0;
+    const others = pool.filter(
+      (r) =>
+        r.room_id !== a.room_id &&
+        r.type?.toLowerCase() === cur.type?.toLowerCase() &&
+        r.capacity >= students,
+    );
+    return [
+      a.room_id,
+      ...others.filter((r) => !isBackupRoom(r)).map((r) => r.room_id),
+      ...others.filter(isBackupRoom).map((r) => r.room_id),
+    ];
+  };
+
+  const gapPenalty = (idxs: number[]): number => {
+    const s = idxs
+      .map((i) => ({
+        st: timeToMinutes(A[i]!.start_time),
+        en: timeToMinutes(A[i]!.end_time),
+      }))
+      .sort((a, b) => a.st - b.st);
+    let p = 0;
+    for (let k = 0; k < s.length - 1; k++) {
+      const gap = s[k + 1]!.st - s[k]!.en;
+      if (gap > 30) p += Math.ceil((gap - 30) / 30);
+    }
+    return p;
+  };
+
+  const groups = new Map<string, number[]>();
+  A.forEach((a, i) => {
+    const k = `${a.section_id}-${a.day_id}`;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k)!.push(i);
+  });
+
+  for (const idxs of groups.values()) {
+    idxs.sort(
+      (x, y) =>
+        timeToMinutes(A[x]!.start_time) - timeToMinutes(A[y]!.start_time),
+    );
+    const before = gapPenalty(idxs);
+    const backup = idxs.map((i) => A[i]!);
+    for (const i of idxs) {
+      const cur = A[i]!;
+      const start = timeToMinutes(cur.start_time);
+      const dur = timeToMinutes(cur.end_time) - start;
+      const rooms = roomOptions(i);
+      placed: for (
+        let s = WORKING_DAY_START_MIN;
+        s < start;
+        s += SLOT_GRANULARITY_MIN
+      ) {
+        for (const rid of rooms) {
+          if (canPlace(i, s, s + dur, rid)) {
+            A[i] = {
+              ...cur,
+              room_id: rid,
+              start_time: minutesToTime(s),
+              end_time: minutesToTime(s + dur),
+            };
+            break placed;
+          }
+        }
+      }
+    }
+    if (gapPenalty(idxs) > before) idxs.forEach((i, k) => (A[i] = backup[k]!));
+  }
+}
+//
+function preferPrimaryRooms(
+  candidate: Candidate,
+  input: SchedulingInput,
+): void {
+  const A = candidate.assignments;
+  const availability = buildAvailabilityByEmployeeDay(input);
+  const roomMap = new Map(input.rooms.map((r) => [r.room_id, r]));
+  const sectionMap = new Map(input.sections.map((s) => [s.section_id, s]));
+
+  const ok = (i: number, s: number, e: number, roomId: number): boolean => {
+    const a = A[i]!;
+    if (a.employee_id !== null) {
+      const windows = availability.get(`${a.employee_id}-${a.day_id}`) ?? [];
+      if (
+        !windows.some(
+          (w) =>
+            timeToMinutes(w.start_time) <= s && e <= timeToMinutes(w.end_time),
+        )
+      )
+        return false;
+    }
+    for (let j = 0; j < A.length; j++) {
+      if (j === i) continue;
+      const o = A[j]!;
+      if (o.day_id !== a.day_id) continue;
+      if (
+        !timeRangesOverlap(
+          s,
+          e,
+          timeToMinutes(o.start_time),
+          timeToMinutes(o.end_time),
+        )
+      )
+        continue;
+      if (
+        o.section_id === a.section_id ||
+        o.room_id === roomId ||
+        (a.employee_id !== null && o.employee_id === a.employee_id)
+      )
+        return false;
+    }
+    return true;
+  };
+
+  const gaps = (sectionId: number, dayId: number): number => {
+    const s = A.filter((x) => x.section_id === sectionId && x.day_id === dayId)
+      .map((x) => ({
+        st: timeToMinutes(x.start_time),
+        en: timeToMinutes(x.end_time),
+      }))
+      .sort((a, b) => a.st - b.st);
+    let p = 0;
+    for (let k = 0; k < s.length - 1; k++) {
+      const gap = s[k + 1]!.st - s[k]!.en;
+      if (gap > 30) p += Math.ceil((gap - 30) / 30);
+    }
+    return p;
+  };
+
+  for (let i = 0; i < A.length; i++) {
+    const a = A[i]!;
+    const cur = roomMap.get(a.room_id);
+    if (!cur || !isBackupRoom(cur)) continue;
+    const students = sectionMap.get(a.section_id)?.number_of_students ?? 0;
+    const primaries = input.rooms.filter(
+      (r) =>
+        !isBackupRoom(r) &&
+        r.type?.toLowerCase() === cur.type?.toLowerCase() &&
+        r.capacity >= students,
+    );
+    const start = timeToMinutes(a.start_time);
+    const dur = timeToMinutes(a.end_time) - start;
+    const starts = [start];
+    for (
+      let s = WORKING_DAY_START_MIN;
+      s + dur <= WORKING_DAY_END_MIN;
+      s += SLOT_GRANULARITY_MIN
+    )
+      if (s !== start) starts.push(s);
+
+    placed: for (const s of starts) {
+      for (const r of primaries) {
+        if (!ok(i, s, s + dur, r.room_id)) continue;
+        A[i] = {
+          ...a,
+          room_id: r.room_id,
+          start_time: minutesToTime(s),
+          end_time: minutesToTime(s + dur),
+        };
+        break placed;
+      }
+    }
+  }
+}
+function packLabs(candidate: Candidate, input: SchedulingInput): void {
+  const A = candidate.assignments;
+  const availability = buildAvailabilityByEmployeeDay(input);
+  const courseMap = new Map(input.courses.map((c) => [c.course_code, c]));
+  const sectionMap = new Map(input.sections.map((s) => [s.section_id, s]));
+  const roomMap = new Map(input.rooms.map((r) => [r.room_id, r]));
+  const labs = input.rooms.filter(
+    (r) => r.type?.toLowerCase() === "laboratory",
+  );
+
+  const isLabClass = (a: ClassAssignment) =>
+    a.session_number === 1 &&
+    (
+      courseMap.get(a.course_code)?.course_type_description ?? ""
+    ).toLowerCase() === "laboratory" &&
+    roomMap.get(a.room_id)?.type?.toLowerCase() === "laboratory";
+
+  const allowed = (a: ClassAssignment, roomId: number) =>
+    roomPoolForRequirement(
+      {
+        section_id: a.section_id,
+        course_code: a.course_code,
+        session_number: 1,
+        session_duration_hours: a.session_duration_hours,
+        prefers_lab_room: true,
+      },
+      "laboratory",
+      input,
+      sectionMap.get(a.section_id)?.program_id ?? 0,
+    ).some((r) => r.room_id === roomId);
+
+  const canMove = (
+    i: number,
+    day: number,
+    s: number,
+    e: number,
+    roomId: number,
+  ) => {
+    const a = A[i]!;
+    if (a.employee_id !== null) {
+      if (day !== a.day_id) return false;
+      const w = availability.get(`${a.employee_id}-${day}`) ?? [];
+      if (
+        !w.some(
+          (x) =>
+            timeToMinutes(x.start_time) <= s && e <= timeToMinutes(x.end_time),
+        )
+      )
+        return false;
+    }
+    return !A.some(
+      (o, j) =>
+        j !== i &&
+        o.day_id === day &&
+        ((o.section_id === a.section_id && o.course_code === a.course_code) ||
+          (timeRangesOverlap(
+            s,
+            e,
+            timeToMinutes(o.start_time),
+            timeToMinutes(o.end_time),
+          ) &&
+            (o.section_id === a.section_id ||
+              o.room_id === roomId ||
+              (a.employee_id !== null && o.employee_id === a.employee_id)))),
+    );
+  };
+
+  for (let pass = 0; pass < 3; pass++) {
+    for (const room of labs) {
+      for (const day of input.days) {
+        for (let guard = 0; guard < 20; guard++) {
+          const busy = A.filter(
+            (a) => a.room_id === room.room_id && a.day_id === day.day_id,
+          );
+          let s = WORKING_DAY_START_MIN;
+          while (
+            s < WORKING_DAY_END_MIN &&
+            busy.some(
+              (b) =>
+                timeToMinutes(b.start_time) <= s &&
+                s < timeToMinutes(b.end_time),
+            )
+          )
+            s += SLOT_GRANULARITY_MIN;
+          if (s >= WORKING_DAY_END_MIN) break;
+
+          const pick = A.findIndex((a, i) => {
+            if (!isLabClass(a) || !allowed(a, room.room_id)) return false;
+            const st = timeToMinutes(a.start_time);
+            const dur = timeToMinutes(a.end_time) - st;
+            if (st <= WORKING_DAY_START_MIN) return false;
+            const sameSpot =
+              a.room_id === room.room_id && a.day_id === day.day_id;
+            if (sameSpot && st <= s) return false;
+            if (s + dur > WORKING_DAY_END_MIN) return false;
+            return canMove(i, day.day_id, s, s + dur, room.room_id);
+          });
+          if (pick < 0) break;
+          const a = A[pick]!;
+          const dur = timeToMinutes(a.end_time) - timeToMinutes(a.start_time);
+          A[pick] = {
+            ...a,
+            room_id: room.room_id,
+            day_id: day.day_id,
+            start_time: minutesToTime(s),
+            end_time: minutesToTime(s + dur),
+          };
+        }
+      }
+    }
+  }
+}
+function balanceLectureRooms(
+  candidate: Candidate,
+  input: SchedulingInput,
+): void {
+  const A = candidate.assignments;
+  const courseMap = new Map(input.courses.map((c) => [c.course_code, c]));
+  const sectionMap = new Map(input.sections.map((s) => [s.section_id, s]));
+  const roomMap = new Map(input.rooms.map((r) => [r.room_id, r]));
+  const isLecture = (a: ClassAssignment) =>
+    roomMap.get(a.room_id)?.type?.toLowerCase() === "lecture";
+  const hrs = (a: ClassAssignment) =>
+    (timeToMinutes(a.end_time) - timeToMinutes(a.start_time)) / 60;
+
+  const load = new Map<number, number>();
+  for (const a of A)
+    if (isLecture(a)) load.set(a.room_id, (load.get(a.room_id) ?? 0) + hrs(a));
+
+  for (let pass = 0; pass < 3; pass++) {
+    for (let i = 0; i < A.length; i++) {
+      const a = A[i]!;
+      if (!isLecture(a)) continue;
+      const s = timeToMinutes(a.start_time);
+      const e = timeToMinutes(a.end_time);
+      const section = sectionMap.get(a.section_id);
+      const type = (
+        courseMap.get(a.course_code)?.course_type_description ?? ""
+      ).toLowerCase();
+      const pool = roomPoolForRequirement(
+        {
+          section_id: a.section_id,
+          course_code: a.course_code,
+          session_number: a.session_number,
+          session_duration_hours: a.session_duration_hours,
+        },
+        type,
+        input,
+        section?.program_id ?? 0,
+      ).filter(
+        (r) =>
+          r.room_id === a.room_id ||
+          (r.type?.toLowerCase() === "lecture" &&
+            !isBackupRoom(r) &&
+            r.capacity >= (section?.number_of_students ?? 0)),
+      );
+      const free = pool.filter(
+        (r) =>
+          r.room_id === a.room_id ||
+          !A.some(
+            (o, j) =>
+              j !== i &&
+              o.day_id === a.day_id &&
+              o.room_id === r.room_id &&
+              timeRangesOverlap(
+                s,
+                e,
+                timeToMinutes(o.start_time),
+                timeToMinutes(o.end_time),
+              ),
+          ),
+      );
+      if (free.length === 0) continue;
+      const best = free.reduce((x, y) =>
+        (load.get(y.room_id) ?? 0) < (load.get(x.room_id) ?? 0) ? y : x,
+      );
+      const h = hrs(a);
+      if (
+        best.room_id !== a.room_id &&
+        (load.get(best.room_id) ?? 0) + h < (load.get(a.room_id) ?? 0)
+      ) {
+        load.set(a.room_id, (load.get(a.room_id) ?? 0) - h);
+        load.set(best.room_id, (load.get(best.room_id) ?? 0) + h);
+        A[i] = { ...a, room_id: best.room_id };
+      }
+    }
+  }
+}
+function packRooms(candidate: Candidate, input: SchedulingInput): void {
+  const A = candidate.assignments;
+  const availability = buildAvailabilityByEmployeeDay(input);
+  const courseMap = new Map(input.courses.map((c) => [c.course_code, c]));
+  const sectionMap = new Map(input.sections.map((s) => [s.section_id, s]));
+  const roomMap = new Map(input.rooms.map((r) => [r.room_id, r]));
+  const ordered = [
+    ...input.rooms.filter((r) => !isBackupRoom(r)),
+    ...input.rooms.filter(isBackupRoom),
+  ];
+  const roomIdx = new Map(ordered.map((r, i) => [r.room_id, i]));
+  const dayIdx = new Map(input.days.map((d, i) => [d.day_id, i]));
+  const targets = input.rooms.filter((r) => !isBackupRoom(r));
+  const deadline = Date.now() + 15_000;
+
+  const key = (room: number, day: number, start: number) =>
+    (roomIdx.get(room) ?? 0) * 1e7 + (dayIdx.get(day) ?? 0) * 1e4 + start;
+
+  const allowed = (a: ClassAssignment, roomId: number): boolean => {
+    if (a.room_id === roomId) return true;
+    const cur = roomMap.get(a.room_id);
+    const tgt = roomMap.get(roomId);
+    if (!cur || !tgt || cur.type?.toLowerCase() !== tgt.type?.toLowerCase())
+      return false;
+    if (cur.type?.toLowerCase() === "lecture") return false;
+    const section = sectionMap.get(a.section_id);
+    if (tgt.capacity < (section?.number_of_students ?? 0)) return false;
+    const type = (
+      courseMap.get(a.course_code)?.course_type_description ?? ""
+    ).toLowerCase();
+    return roomPoolForRequirement(
+      {
+        section_id: a.section_id,
+        course_code: a.course_code,
+        session_number: a.session_number,
+        session_duration_hours: a.session_duration_hours,
+        prefers_lab_room: type === "laboratory" && a.session_number === 1,
+      },
+      type,
+      input,
+      section?.program_id ?? 0,
+    ).some((r) => r.room_id === roomId);
+  };
+
+  const canMove = (
+    i: number,
+    day: number,
+    s: number,
+    e: number,
+    roomId: number,
+  ) => {
+    const a = A[i]!;
+    if (
+      roomMap.get(a.room_id)?.type?.toLowerCase() === "lecture" &&
+      day !== a.day_id
+    )
+      return false;
+    if (a.employee_id !== null) {
+      if (day !== a.day_id) return false;
+      const w = availability.get(`${a.employee_id}-${day}`) ?? [];
+      if (
+        !w.some(
+          (x) =>
+            timeToMinutes(x.start_time) <= s && e <= timeToMinutes(x.end_time),
+        )
+      )
+        return false;
+    }
+    return !A.some(
+      (o, j) =>
+        j !== i &&
+        o.day_id === day &&
+        ((o.section_id === a.section_id && o.course_code === a.course_code) ||
+          (timeRangesOverlap(
+            s,
+            e,
+            timeToMinutes(o.start_time),
+            timeToMinutes(o.end_time),
+          ) &&
+            (o.section_id === a.section_id ||
+              o.room_id === roomId ||
+              (a.employee_id !== null && o.employee_id === a.employee_id)))),
+    );
+  };
+
+  for (let pass = 0; pass < 4; pass++) {
+    for (const room of targets) {
+      for (const day of input.days) {
+        for (
+          let s = WORKING_DAY_START_MIN;
+          s < WORKING_DAY_END_MIN;
+          s += SLOT_GRANULARITY_MIN
+        ) {
+          if (Date.now() > deadline) return;
+          const busy = A.some(
+            (b) =>
+              b.room_id === room.room_id &&
+              b.day_id === day.day_id &&
+              timeToMinutes(b.start_time) <= s &&
+              s < timeToMinutes(b.end_time),
+          );
+          if (busy) continue;
+
+          const target = key(room.room_id, day.day_id, s);
+          const fits = (i: number) => {
+            const a = A[i]!;
+            const st = timeToMinutes(a.start_time);
+            const dur = timeToMinutes(a.end_time) - st;
+            if (key(a.room_id, a.day_id, st) <= target) return false;
+            if (s + dur > WORKING_DAY_END_MIN) return false;
+            if (!allowed(a, room.room_id)) return false;
+            return canMove(i, day.day_id, s, s + dur, room.room_id);
+          };
+          // prefer sliding a later class of this same room/day, else pull from elsewhere
+          let pick = A.findIndex(
+            (a, i) =>
+              a.room_id === room.room_id && a.day_id === day.day_id && fits(i),
+          );
+          if (pick < 0) pick = A.findIndex((_, i) => fits(i));
+          if (pick < 0) continue;
+
+          const a = A[pick]!;
+          const dur = timeToMinutes(a.end_time) - timeToMinutes(a.start_time);
+          A[pick] = {
+            ...a,
+            room_id: room.room_id,
+            day_id: day.day_id,
+            start_time: minutesToTime(s),
+            end_time: minutesToTime(s + dur),
+          };
+        }
+      }
+    }
+  }
+}
 export function runGA(
   requirements: SchedulingRequirement[],
   input: SchedulingInput,
@@ -1577,7 +2251,7 @@ export function runGA(
   const populationSize = options.populationSize ?? 50;
   const maxGenerations = options.maxGenerations ?? 200;
   console.time("Initial population");
-
+  console.log(`[GA CONFIG] Crossover Rate: ${CROSSOVER_RATE}`);
   let population = initializePopulation(populationSize, requirements, input);
 
   console.timeEnd("Initial population");
@@ -1687,6 +2361,29 @@ export function runGA(
       .filter((v) => v.type === "EMPLOYEE_UNAVAILABLE")
       .map((v) => v.message),
   );
+  if (!hasHardViolations(finalResult.violations)) {
+    const backup = finalBest.assignments.map((a) => ({ ...a }));
+    console.time("packLabs");
+    packLabs(finalBest, input);
+    console.timeEnd("packLabs");
+    console.time("compactCandidate");
+    compactCandidate(finalBest, input);
+    console.timeEnd("compactCandidate");
+    console.time("preferPrimaryRooms");
+    preferPrimaryRooms(finalBest, input);
+    console.timeEnd("preferPrimaryRooms");
+    console.time("balanceLectureRooms");
+    balanceLectureRooms(finalBest, input);
+    console.timeEnd("balanceLectureRooms");
+    console.time("packRooms");
+    packRooms(finalBest, input);
+    console.timeEnd("packRooms");
+    finalResult = scoreCandidate(finalBest, input);
+    if (hasHardViolations(finalResult.violations)) {
+      finalBest.assignments = backup;
+      finalResult = scoreCandidate(finalBest, input);
+    }
+  }
   const feasible = !hasHardViolations(finalResult.violations);
 
   const hardViolationCount = finalResult.violations.filter((v) =>

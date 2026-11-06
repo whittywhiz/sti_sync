@@ -255,6 +255,51 @@ async function main() {
       .filter((v) => HARD.includes(v.type))
       .map((v) => v.message),
   );
+  const LAB_NAMES = ["Lab 1", "Lab 2", "Lab 3", "Kitchen Lab"];
+  const toMin = (t: string) => {
+    const [h, m] = t.split(":").map(Number);
+    return h! * 60 + m!;
+  };
+  const slots = new Map<string, Set<number>>();
+  for (const a of result.best.assignments) {
+    const room = roomMap.get(a.room_id)?.room_number.trim();
+    if (!room || !LAB_NAMES.includes(room)) continue;
+    const k = `${room}|${a.day_id}`;
+    const set = slots.get(k) ?? new Set<number>();
+    for (let t = toMin(a.start_time); t < toMin(a.end_time); t += 30)
+      set.add(t);
+    slots.set(k, set);
+  }
+  console.table(
+    LAB_NAMES.map((l) =>
+      Object.fromEntries([
+        ["lab", l],
+        ...input.days.map((d) => {
+          const s = slots.get(`${l}|${d.day_id}`);
+          return [
+            d.day_id,
+            `${s?.has(420) ? "7AM ✔" : "7AM ✘"} ${(s?.size ?? 0) / 2}/13h`,
+          ];
+        }),
+      ]),
+    ),
+  );
+  for (const l of LAB_NAMES)
+    for (const d of input.days) {
+      const s = slots.get(`${l}|${d.day_id}`) ?? new Set<number>();
+      if (s.has(420)) continue;
+      const free: string[] = [];
+      let from: number | null = null;
+      for (let t = 420; t <= 1200; t += 30) {
+        const open = t < 1200 && !s.has(t);
+        if (open && from === null) from = t;
+        if (!open && from !== null) {
+          free.push(`${from / 60}-${t / 60}h`);
+          from = null;
+        }
+      }
+      console.log(l, "day", d.day_id, "free:", free.join(", "));
+    }
   await pool.end();
 }
 

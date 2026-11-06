@@ -45,6 +45,9 @@ export function AppSidebar() {
           alt="STI-Sync"
           className="h-14 w-auto rounded-lg"
         />
+        <div className="mt-1.5 text-[8.7px] font-medium tracking-[2.2px] text-[#6b7788]">
+          AUTOMATED TIMETABLING SYSTEM
+        </div>
       </div>
       <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
         {navItems.map((item) => (

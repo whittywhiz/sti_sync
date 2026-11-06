@@ -30,31 +30,43 @@ export default function AssignInstructorModal({
   onDone,
   onMove,
   vacantSlots = [],
+  onEmpChange,
 }: {
   cls: any;
   onClose: () => void;
-  onDone: (msg?: string) => void;
+  onDone: (msg?: string, empId?: number | null, empName?: string) => void;
   onMove: (slot: VacantSlot, employee_id: number | null) => Promise<boolean>;
   vacantSlots: VacantSlot[];
+  onEmpChange: (id: number | null | undefined) => void;
 }) {
   const [opts, setOpts] = useState<Opt[] | null>(null);
   // undefined = instructor unchanged, null = unassign, number = new instructor
   const [selEmp, setSelEmp] = useState<number | null | undefined>(undefined);
   const [selSlot, setSelSlot] = useState<VacantSlot | null>(null);
-  const [warn, setWarn] = useState<{ name: string; total: number } | null>(
-    null,
-  );
+  const [warn, setWarn] = useState<{
+    name: string;
+    total: number;
+    day?: string;
+  } | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    fetch(`/api/classes/${cls.class_id}/eligible-employees`)
+    onEmpChange(selEmp);
+    setSelSlot(null);
+  }, [selEmp]);
+
+  useEffect(() => {
+    const q = selSlot
+      ? `?day_id=${selSlot.day_id}&start=${selSlot.start_time}&end=${selSlot.end_time}`
+      : "";
+    fetch(`/api/classes/${cls.class_id}/eligible-employees${q}`)
       .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then(setOpts)
       .catch(() => {
         setOpts([]);
         toast.error("Failed to load instructors.");
       });
-  }, [cls.class_id]);
+  }, [cls.class_id, selSlot]);
 
   const empChanged =
     selEmp !== undefined && selEmp !== (cls.employee_id ?? null);
@@ -63,7 +75,7 @@ export default function AssignInstructorModal({
   const save = async (confirm_overload = false) => {
     setBusy(true);
     try {
-      if (empChanged) {
+      if (empChanged && !selSlot) {
         const res = await fetch(`/api/classes/${cls.class_id}/employee`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -81,6 +93,11 @@ export default function AssignInstructorModal({
       let msg: string | undefined;
       if (selSlot) {
         const newEmp = empChanged ? (selEmp as number | null) : cls.employee_id;
+        const o = opts?.find((x) => x.employee_id === newEmp);
+        if (newEmp !== null && o?.exceeds && !confirm_overload) {
+          setWarn({ name: o.name, total: o.would_be, day: selSlot.day });
+          return;
+        }
         const ok = await onMove(selSlot, newEmp);
         if (!ok) return;
       } else {
@@ -89,7 +106,13 @@ export default function AssignInstructorModal({
           : `${cls.course_code} instructor removed`;
       }
 
-      onDone(msg);
+      const finalEmp = empChanged ? (selEmp as number | null) : cls.employee_id;
+      const finalName =
+        finalEmp === null
+          ? "Unassigned"
+          : (opts?.find((x) => x.employee_id === finalEmp)?.name ??
+            cls.professor);
+      onDone(msg, finalEmp, finalName);
       onClose();
     } finally {
       setBusy(false);
@@ -104,11 +127,11 @@ export default function AssignInstructorModal({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md rounded-xl bg-white p-5 shadow-2xl"
+        className="flex h-[770px] max-h-[90vh] w-full max-w-md flex-col rounded-xl bg-white p-5 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 className="font-heading text-lg font-bold">Edit class</h3>
-        <div className="mt-2 space-y-0.5 text-sm text-muted-foreground">
+        <h3 className="shrink-0 font-heading text-lg font-bold">Edit class</h3>
+        <div className="mt-2 shrink-0 space-y-0.5 text-sm text-muted-foreground">
           <p>
             <span className="font-semibold text-foreground">
               {cls.course_code}
@@ -126,10 +149,10 @@ export default function AssignInstructorModal({
         </div>
 
         {warn ? (
-          <div className="mt-4 space-y-3">
+          <div className="mt-4 flex flex-1 flex-col justify-between">
             <p className="rounded-md bg-amber-50 p-3 text-sm text-amber-900">
-              {warn.name} would teach <b>{warn.total} hrs</b> on {cls.day}, over
-              the 9-hour daily limit. Assign anyway?
+              {warn.name} would teach <b>{warn.total} hrs</b> on{" "}
+              {warn.day ?? cls.day}, over the 9-hour daily limit. Assign anyway?
             </p>
             <div className="flex justify-end gap-2">
               <Button variant="outline" size="sm" onClick={() => setWarn(null)}>
@@ -141,8 +164,8 @@ export default function AssignInstructorModal({
             </div>
           </div>
         ) : (
-          <>
-            <div className="mt-4 flex items-center justify-between">
+          <div className="mt-4 flex min-h-0 flex-1 flex-col">
+            <div className="flex shrink-0 items-center justify-between">
               <p className="text-xs font-semibold text-muted-foreground">
                 Instructor
               </p>
@@ -156,7 +179,7 @@ export default function AssignInstructorModal({
                 </button>
               )}
             </div>
-            <ul className="mt-1 max-h-40 divide-y overflow-y-auto rounded-md border">
+            <ul className="mt-1 min-h-[96px] flex-1 divide-y overflow-y-auto rounded-md border">
               {opts === null && (
                 <li className="p-3 text-sm text-muted-foreground">
                   Loading...
@@ -187,17 +210,17 @@ export default function AssignInstructorModal({
                           : "text-xs text-muted-foreground"
                       }
                     >
-                      {o.would_be} hrs that day
+                      {o.would_be} {o.would_be === 1 ? "hr" : "hrs"} that day
                     </span>
                   </button>
                 </li>
               ))}
             </ul>
 
-            <p className="mt-4 text-xs font-semibold text-muted-foreground">
+            <p className="mt-4 shrink-0 text-xs font-semibold text-muted-foreground">
               Room and time
             </p>
-            <ul className="mt-1 max-h-40 divide-y overflow-y-auto rounded-md border">
+            <ul className="mt-1 min-h-[96px] flex-1 divide-y overflow-y-auto rounded-md border">
               {vacantSlots.length === 0 && (
                 <li className="p-3 text-sm text-muted-foreground">
                   No available slots.
@@ -231,7 +254,7 @@ export default function AssignInstructorModal({
               })}
             </ul>
 
-            <div className="mt-4 flex justify-end gap-2">
+            <div className="mt-auto flex shrink-0 justify-end gap-2 pt-4">
               <Button variant="outline" size="sm" onClick={onClose}>
                 Close
               </Button>
@@ -243,7 +266,7 @@ export default function AssignInstructorModal({
                 Save
               </Button>
             </div>
-          </>
+          </div>
         )}
       </div>
     </div>,

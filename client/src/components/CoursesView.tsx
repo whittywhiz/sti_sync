@@ -118,19 +118,39 @@ function CourseForm({
     initial.employee_ids,
   );
   const [error, setError] = useState("");
+  const TYPE_ORDER = ["Laboratory", "Lecture", "PE"];
+  const sortedCourseTypes = [...courseTypes].sort(
+    (a, b) =>
+      TYPE_ORDER.indexOf(a.course_type_description) -
+        TYPE_ORDER.indexOf(b.course_type_description) ||
+      b.total_hours - a.total_hours,
+  );
   const [profOpen, setProfOpen] = useState(false);
   const [profSearch, setProfSearch] = useState("");
 
   const filteredEmployees = employees.filter((e) => {
-    const q = profSearch.trim().toLowerCase();
-    if (!q) return true;
-    const startsWord = (text: string) =>
-      text
-        .toLowerCase()
-        .split(/\s+/)
-        .some((word) => word.startsWith(q));
-    return startsWord(e.name) || startsWord(e.department ?? "");
+    const tokens = profSearch.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) return true;
+    const words = `${e.name} ${e.department ?? ""}`.toLowerCase().split(/\s+/);
+    return tokens.every((t) => words.some((w) => w.startsWith(t)));
   });
+
+  const groupedEmployees = Array.from(
+    filteredEmployees
+      .reduce((map, e) => {
+        const dept = e.department?.trim() || "Unassigned";
+        map.set(dept, [...(map.get(dept) ?? []), e]);
+        return map;
+      }, new Map<string, Employee[]>())
+      .entries(),
+  )
+    .sort(([a], [b]) =>
+      a === "Unassigned" ? 1 : b === "Unassigned" ? -1 : a.localeCompare(b),
+    )
+    .map(
+      ([dept, list]) =>
+        [dept, [...list].sort((a, b) => a.name.localeCompare(b.name))] as const,
+    );
 
   const updatePlacement = (i: number, patch: Partial<Placement>) =>
     setPlacements((ps) =>
@@ -214,7 +234,7 @@ function CourseForm({
           <SelectValue placeholder="Course Type" />
         </SelectTrigger>
         <SelectContent>
-          {courseTypes.map((ct) => (
+          {sortedCourseTypes.map((ct) => (
             <SelectItem
               key={ct.course_type_id}
               value={String(ct.course_type_id)}
@@ -247,7 +267,7 @@ function CourseForm({
           {placements.map((pl, i) => (
             <div
               key={i}
-              className="grid grid-cols-[1fr_130px_150px_120px_auto] gap-2 items-center"
+              className="grid grid-cols-[minmax(220px,1.5fr)_130px_150px_120px_auto] gap-2 items-center"
             >
               <Select
                 value={String(pl.program_id)}
@@ -255,15 +275,24 @@ function CourseForm({
                   updatePlacement(i, { program_id: Number(v) })
                 }
               >
-                <SelectTrigger>
+                <SelectTrigger className="[&>span]:flex-1 [&>span]:text-left">
                   <SelectValue placeholder="Program" />
                 </SelectTrigger>
                 <SelectContent>
-                  {programs.map((p) => (
-                    <SelectItem key={p.program_id} value={String(p.program_id)}>
-                      {p.description}
-                    </SelectItem>
-                  ))}
+                  {[...programs]
+                    .sort(
+                      (a, b) =>
+                        b.description.length - a.description.length ||
+                        a.description.localeCompare(b.description),
+                    )
+                    .map((p) => (
+                      <SelectItem
+                        key={p.program_id}
+                        value={String(p.program_id)}
+                      >
+                        {p.description}
+                      </SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
               <Select
@@ -350,7 +379,7 @@ function CourseForm({
             <div className="relative p-2 border-b">
               <Search className="w-4 h-4 absolute left-5 top-1/2 -translate-y-1/2 text-muted-foreground" />
               <Input
-                placeholder="Search professor or department…"
+                placeholder="Search instructor or department…"
                 value={profSearch}
                 onChange={(e) => setProfSearch(e.target.value)}
                 onKeyDown={(e) => {
@@ -365,22 +394,26 @@ function CourseForm({
                   No Instructor found.
                 </p>
               )}
-              {filteredEmployees.map((e) => (
-                <label
-                  key={e.employee_id}
-                  className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-muted/50"
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedEmployeeIds.includes(e.employee_id)}
-                    onChange={() => toggleEmployee(e.employee_id)}
-                    className="h-4 w-4 accent-primary"
-                  />
-                  <span>{e.name}</span>
-                  <span className="text-xs text-muted-foreground">
-                    · {e.department}
-                  </span>
-                </label>
+              {groupedEmployees.map(([dept, list]) => (
+                <div key={dept}>
+                  <div className="sticky top-0 bg-muted px-3 py-1 text-xs font-semibold text-muted-foreground">
+                    {dept} · {list.length}
+                  </div>
+                  {list.map((e) => (
+                    <label
+                      key={e.employee_id}
+                      className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-muted/50"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedEmployeeIds.includes(e.employee_id)}
+                        onChange={() => toggleEmployee(e.employee_id)}
+                        className="h-4 w-4 accent-primary"
+                      />
+                      <span>{e.name}</span>
+                    </label>
+                  ))}
+                </div>
               ))}
             </div>
           </div>
@@ -410,6 +443,7 @@ function CourseForm({
           <Check className="w-4 h-4 mr-1" /> Save
         </Button>
         <Button
+          type="button"
           size="sm"
           variant="outline"
           className="!bg-white hover:!bg-accent"
@@ -429,6 +463,7 @@ export function CoursesView() {
   const [curriculums, setCurriculums] = useState<Curriculum[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deleting, setDeleting] = useState(false);
 
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -436,6 +471,7 @@ export function CoursesView() {
   const [search, setSearch] = useState("");
   const [filterProgram, setFilterProgram] = useState<string>("all");
   const [filterType, setFilterType] = useState<string>("all");
+  const [filterTerm, setFilterTerm] = useState<string>("all");
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [assignedCodes, setAssignedCodes] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<string[]>([]);
@@ -627,6 +663,7 @@ export function CoursesView() {
   };
 
   const removeCourse = async (code: string) => {
+    setDeleting(true);
     try {
       const res = await fetch(`/api/courses/${code}`, { method: "DELETE" });
       if (!res.ok) {
@@ -636,10 +673,12 @@ export function CoursesView() {
       }
       toast.success("Course deleted");
       setSelected((s) => s.filter((k) => codeOf(k) !== code));
-      fetchAll();
+      await fetchAll();
     } catch (err) {
       console.error("Failed to delete course", err);
       toast.error("Failed to delete course");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -660,6 +699,7 @@ export function CoursesView() {
   };
 
   const removeSelected = async () => {
+    setDeleting(true);
     const codes = [...selectedCodes];
     const failed: string[] = [];
     let firstError = "";
@@ -685,7 +725,8 @@ export function CoursesView() {
       );
     }
     setSelected((s) => s.filter((k) => failed.includes(codeOf(k))));
-    fetchAll();
+    await fetchAll();
+    setDeleting(false);
   };
 
   const placementsByCourse = useMemo(() => {
@@ -702,8 +743,17 @@ export function CoursesView() {
     placementsByCourse.get(code) ?? [];
 
   const matchesType = (cu: Curriculum) =>
-    filterType === "all" || cu.year_level === filterType;
-
+    (filterType === "all" || cu.year_level === filterType) &&
+    (filterTerm === "all" || (cu.term ?? "1st Semester") === filterTerm);
+  const programsByLength = useMemo(
+    () =>
+      [...programs].sort(
+        (a, b) =>
+          b.description.length - a.description.length ||
+          a.description.localeCompare(b.description),
+      ),
+    [programs],
+  );
   const filtered = useMemo(() => {
     const matchingCuls = curriculums.filter(
       (cu) =>
@@ -723,10 +773,11 @@ export function CoursesView() {
         );
       })
       .sort((a, b) => a.course_code.localeCompare(b.course_code));
-  }, [courses, curriculums, filterProgram, filterType, search]);
+  }, [courses, curriculums, filterProgram, filterType, filterTerm, search]);
 
   const unplaced = useMemo(() => {
-    if (filterProgram !== "all" || filterType !== "all") return [];
+    if (filterProgram !== "all" || filterType !== "all" || filterTerm !== "all")
+      return [];
     const placed = new Set(curriculums.map((cu) => cu.course_code));
     const q = search.toLowerCase();
     return courses
@@ -738,7 +789,7 @@ export function CoursesView() {
           c.course_description.toLowerCase().includes(q),
       )
       .sort((a, b) => a.course_code.localeCompare(b.course_code));
-  }, [courses, curriculums, filterProgram, filterType, search]);
+  }, [courses, curriculums, filterProgram, filterType, filterTerm, search]);
   //
 
   const grouped = useMemo(() => {
@@ -808,7 +859,7 @@ export function CoursesView() {
 
       return pa.localeCompare(pb);
     });
-  }, [filtered, programs, filterProgram, filterType, curriculums]);
+  }, [filtered, programs, filterProgram, filterType, filterTerm, curriculums]);
 
   const allKeys = useMemo(
     () => [
@@ -1001,7 +1052,7 @@ export function CoursesView() {
           </div>
         </div>
 
-        <div className="glass-card rounded-xl p-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="glass-card rounded-xl p-4 grid grid-cols-1 md:grid-cols-4 gap-3">
           <div className="relative">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -1020,7 +1071,7 @@ export function CoursesView() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Programs</SelectItem>
-              {programs.map((p) => (
+              {programsByLength.map((p) => (
                 <SelectItem key={p.program_id} value={String(p.program_id)}>
                   {p.description}
                 </SelectItem>
@@ -1036,6 +1087,19 @@ export function CoursesView() {
               {YEAR_LEVELS.map((year) => (
                 <SelectItem key={year} value={year}>
                   {year}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={filterTerm} onValueChange={setFilterTerm}>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Semesters</SelectItem>
+              {TERMS.map((t) => (
+                <SelectItem key={t} value={t}>
+                  {t}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -1158,7 +1222,7 @@ export function CoursesView() {
         }}
         onCancel={() => setBulkDeleteOpen(false)}
       />
-      {loading &&
+      {(loading || deleting) &&
         createPortal(
           <div
             role="status"
@@ -1167,7 +1231,9 @@ export function CoursesView() {
           >
             <div className="flex items-center gap-3 rounded-lg bg-white px-5 py-3 shadow-md">
               <Loader2 className="h-5 w-5 animate-spin text-gray-700" />
-              <span className="text-sm text-gray-700">Loading...</span>
+              <span className="text-sm text-gray-700">
+                {deleting ? "Deleting..." : "Loading..."}
+              </span>
             </div>
           </div>,
           document.body,

@@ -122,6 +122,15 @@ function SectionForm({
       return;
     }
     setError("");
+    if (
+      trimmedName === initial.section_name &&
+      programId === initial.program_id &&
+      yearLevel === initial.year_level &&
+      countNum === initial.number_of_students
+    ) {
+      onCancel();
+      return;
+    }
     onSave({
       section_name: trimmedName,
       program_id: programId,
@@ -129,7 +138,6 @@ function SectionForm({
       number_of_students: countNum,
     });
   };
-
   return (
     <form
       onSubmit={(e) => {
@@ -167,7 +175,7 @@ function SectionForm({
           </SelectContent>
         </Select>
         <Input
-          placeholder="Section Letter (e.g. A)"
+          placeholder="Section Name (e.g. A)"
           value={sectionName}
           onChange={(e) =>
             setSectionName(
@@ -193,6 +201,7 @@ function SectionForm({
           <Check className="w-4 h-4 mr-1" /> Save
         </Button>
         <Button
+          type="button"
           size="sm"
           variant="outline"
           className="!bg-white hover:!bg-accent"
@@ -213,6 +222,7 @@ export function SectionsView() {
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [activeSemester, setActiveSemester] = useState<string>("");
   const [loading, setLoading] = useState(true);
+  const [deleting, setDeleting] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -319,7 +329,7 @@ export function SectionsView() {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setErrorModal(data.error || "Failed to create section");
+        toast.error(data.error || "Failed to create section");
         return;
       }
 
@@ -347,7 +357,7 @@ export function SectionsView() {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setErrorModal(data.error || "Failed to update section");
+        toast.error(data.error || "Failed to update section");
         return;
       }
       toast.success("Section updated successfully");
@@ -360,6 +370,7 @@ export function SectionsView() {
   };
 
   const removeSection = async (id: number) => {
+    setDeleting(true);
     try {
       const res = await fetch(`/api/sections/${id}`, { method: "DELETE" });
       if (!res.ok) {
@@ -369,10 +380,12 @@ export function SectionsView() {
       }
       toast.success("Section deleted");
       setSelected((s) => s.filter((x) => x !== id));
-      fetchAll();
+      await fetchAll();
     } catch (err) {
       console.error("Failed to delete section", err);
       toast.error("Failed to delete section");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -384,6 +397,7 @@ export function SectionsView() {
   const removeSelected = async () => {
     const ids = [...selected];
     const failed: number[] = [];
+    setDeleting(true);
     let firstError = "";
     for (const id of ids) {
       try {
@@ -407,7 +421,8 @@ export function SectionsView() {
       );
     }
     setSelected(failed);
-    fetchAll();
+    await fetchAll();
+    setDeleting(false);
   };
 
   const handleActivateSemester = async (schedule: Schedule) => {
@@ -544,7 +559,11 @@ export function SectionsView() {
       ).length,
     [curriculums],
   );
-
+  const programsByLength = useMemo(
+    () =>
+      [...programs].sort((a, b) => b.description.length - a.description.length),
+    [programs],
+  );
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
     return sections.filter((s) => {
@@ -689,18 +708,22 @@ export function SectionsView() {
               className="pl-9"
             />
           </div>
-          <select
-            value={programFilter}
-            onChange={(e) => setProgramFilter(e.target.value)}
-            className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+          <Select
+            value={programFilter || "all"}
+            onValueChange={(v) => setProgramFilter(v === "all" ? "" : v)}
           >
-            <option value="">All programs</option>
-            {programs.map((p) => (
-              <option key={p.program_id} value={String(p.program_id)}>
-                {p.description}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger className="w-[340px] bg-white">
+              <SelectValue placeholder="All programs" />
+            </SelectTrigger>
+            <SelectContent className="bg-white">
+              <SelectItem value="all">All programs</SelectItem>
+              {programsByLength.map((p) => (
+                <SelectItem key={p.program_id} value={String(p.program_id)}>
+                  {p.description}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
@@ -887,14 +910,15 @@ export function SectionsView() {
               maxLength={4}
               onChange={(e) => setSemYear(e.target.value)}
             />
-            <select
-              value={semTerm}
-              onChange={(e) => setSemTerm(e.target.value)}
-              className="h-10 border rounded-md px-3 text-sm bg-background"
-            >
-              <option>1st Semester</option>
-              <option>2nd Semester</option>
-            </select>
+            <Select value={semTerm} onValueChange={setSemTerm}>
+              <SelectTrigger className="bg-white">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="bg-white z-[200]">
+                <SelectItem value="1st Semester">1st Semester</SelectItem>
+                <SelectItem value="2nd Semester">2nd Semester</SelectItem>
+              </SelectContent>
+            </Select>
             <Input
               type="date"
               value={semStart}
@@ -931,22 +955,20 @@ export function SectionsView() {
           <p className="text-sm text-muted-foreground">
             Copy sections into {activeSemester || "the active semester"} from:
           </p>
-          <select
-            value={copyFrom}
-            onChange={(e) => setCopyFrom(e.target.value)}
-            className="border rounded-md px-3 py-2 text-sm bg-background w-full"
-          >
-            <option value="" disabled hidden>
-              Select a semester
-            </option>
-            {schedules
-              .filter((s) => !s.is_hidden && s.status !== "active")
-              .map((s) => (
-                <option key={s.schedule_id} value={s.schedule_id}>
-                  {s.term} {s.year}
-                </option>
-              ))}
-          </select>
+          <Select value={copyFrom} onValueChange={setCopyFrom}>
+            <SelectTrigger className="w-full bg-white">
+              <SelectValue placeholder="Select a semester" />
+            </SelectTrigger>
+            <SelectContent className="bg-white z-[200]">
+              {schedules
+                .filter((s) => !s.is_hidden && s.status !== "active")
+                .map((s) => (
+                  <SelectItem key={s.schedule_id} value={String(s.schedule_id)}>
+                    {s.term} {s.year}
+                  </SelectItem>
+                ))}
+            </SelectContent>
+          </Select>
           <div className="flex gap-2">
             <Button size="sm" onClick={copySections} disabled={!copyFrom}>
               <Check className="w-4 h-4 mr-1" /> Copy
@@ -1045,7 +1067,7 @@ export function SectionsView() {
         }}
         onCancel={() => setBulkDeleteOpen(false)}
       />
-      {loading &&
+      {(loading || deleting) &&
         createPortal(
           <div
             role="status"
@@ -1054,7 +1076,9 @@ export function SectionsView() {
           >
             <div className="flex items-center gap-3 rounded-lg bg-white px-5 py-3 shadow-md">
               <Loader2 className="h-5 w-5 animate-spin text-gray-700" />
-              <span className="text-sm text-gray-700">Loading...</span>
+              <span className="text-sm text-gray-700">
+                {deleting ? "Deleting..." : "Loading..."}
+              </span>
             </div>
           </div>,
           document.body,

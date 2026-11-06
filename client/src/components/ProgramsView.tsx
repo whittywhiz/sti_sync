@@ -98,6 +98,7 @@ export function ProgramsView() {
   const [deleteTarget, setDeleteTarget] = useState<Program | null>(null);
   const [selected, setSelected] = useState<number[]>([]);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const fetchAll = async () => {
     setLoading(true);
@@ -214,6 +215,7 @@ export function ProgramsView() {
   };
 
   const removeProgram = async (id: number) => {
+    setDeleting(true);
     try {
       const res = await fetch(`/api/programs/${id}`, { method: "DELETE" });
       if (!res.ok) {
@@ -227,15 +229,17 @@ export function ProgramsView() {
     } catch (err) {
       console.error("Failed to delete program", err);
       toast.error("Failed to delete program");
+    } finally {
+      setDeleting(false);
     }
   };
-
   const toggleSelect = (id: number) =>
     setSelected((s) =>
       s.includes(id) ? s.filter((x) => x !== id) : [...s, id],
     );
 
   const removeSelected = async () => {
+    setDeleting(true);
     const ids = [...selected];
     const failed: number[] = [];
     let firstError = "";
@@ -265,6 +269,7 @@ export function ProgramsView() {
       );
     }
     setSelected(failed);
+    setDeleting(false);
     fetchAll();
   };
 
@@ -480,8 +485,7 @@ export function ProgramsView() {
         }}
         onCancel={() => setBulkDeleteOpen(false)}
       />
-
-      {loading &&
+      {(loading || deleting) &&
         createPortal(
           <div
             role="status"
@@ -490,7 +494,9 @@ export function ProgramsView() {
           >
             <div className="flex items-center gap-3 rounded-lg bg-white px-5 py-3 shadow-md">
               <Loader2 className="h-5 w-5 animate-spin text-gray-700" />
-              <span className="text-sm text-gray-700">Loading...</span>
+              <span className="text-sm text-gray-700">
+                {deleting ? "Deleting..." : "Loading..."}
+              </span>
             </div>
           </div>,
           document.body,

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Plus,
   Trash2,
@@ -299,41 +299,68 @@ function ProfessorForm({
       <div>
         <p className="text-sm font-medium mb-2">Availability</p>
         <div className="flex gap-2 items-end flex-wrap">
-          <select
-            value={selDayId}
-            onChange={(e) => setSelDayId(+e.target.value)}
-            className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+          <Select
+            value={String(selDayId)}
+            onValueChange={(value) => setSelDayId(Number(value))}
           >
-            {days.map((d) => (
-              <option key={d.day_id} value={d.day_id}>
-                {d.name}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger className="w-[150px]">
+              <SelectValue placeholder="Select day" />
+            </SelectTrigger>
+            <SelectContent
+              position="popper"
+              side="bottom"
+              sideOffset={4}
+              avoidCollisions={false}
+            >
+              {days.map((d) => (
+                <SelectItem key={d.day_id} value={String(d.day_id)}>
+                  {d.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <div className="flex items-center gap-1">
-            <select
-              value={selStart}
-              onChange={(e) => setSelStart(+e.target.value)}
-              className="h-10 rounded-md border border-input bg-background px-2 text-sm"
+            <Select
+              value={String(selStart)}
+              onValueChange={(value) => setSelStart(Number(value))}
             >
-              {HOUR_OPTIONS.map((h) => (
-                <option key={h} value={h}>
-                  {formatHour12(h)}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger className="w-[120px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent
+                position="popper"
+                side="bottom"
+                sideOffset={4}
+                avoidCollisions={false}
+              >
+                {HOUR_OPTIONS.map((h) => (
+                  <SelectItem key={h} value={String(h)}>
+                    {formatHour12(h)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <span className="text-muted-foreground">to</span>
-            <select
-              value={selEnd}
-              onChange={(e) => setSelEnd(+e.target.value)}
-              className="h-10 rounded-md border border-input bg-background px-2 text-sm"
+            <Select
+              value={String(selEnd)}
+              onValueChange={(value) => setSelEnd(Number(value))}
             >
-              {HOUR_OPTIONS.map((h) => (
-                <option key={h} value={h}>
-                  {formatHour12(h)}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger className="w-[120px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent
+                position="popper"
+                side="bottom"
+                sideOffset={4}
+                avoidCollisions={false}
+              >
+                {HOUR_OPTIONS.map((h) => (
+                  <SelectItem key={h} value={String(h)}>
+                    {formatHour12(h)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <Button
             variant="outline"
@@ -348,17 +375,19 @@ function ProfessorForm({
           )}
         </div>
         <div className="flex gap-2 mt-2 flex-wrap">
-          {slots.map((s) => (
-            <Badge
-              variant="secondary"
-              className="cursor-pointer"
-              key={`${s.day_id}-${s.start_hour}-${s.end_hour}`}
-              onClick={() => removeSlot(s.day_id, s.start_hour, s.end_hour)}
-            >
-              {SHORT_DAY[dayName(s.day_id)] ?? dayName(s.day_id)}{" "}
-              {formatHour12(s.start_hour)}–{formatHour12(s.end_hour)} ✕
-            </Badge>
-          ))}
+          {[...slots]
+            .sort((a, b) => a.day_id - b.day_id || a.start_hour - b.start_hour)
+            .map((s) => (
+              <Badge
+                variant="secondary"
+                className="cursor-pointer rounded-full bg-primary/10 text-primary hover:bg-primary/20"
+                key={`${s.day_id}-${s.start_hour}-${s.end_hour}`}
+                onClick={() => removeSlot(s.day_id, s.start_hour, s.end_hour)}
+              >
+                {SHORT_DAY[dayName(s.day_id)] ?? dayName(s.day_id)}{" "}
+                {formatHour12(s.start_hour)}–{formatHour12(s.end_hour)} ✕
+              </Badge>
+            ))}
         </div>
       </div>
       {saveError && <p className="text-xs text-destructive">{saveError}</p>}
@@ -391,6 +420,7 @@ export function ProfessorsView() {
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [deptFilter, setDeptFilter] = useState("");
   const [deptOptions, setDeptOptions] = useState<string[]>([]);
+  const savingRef = useRef(false);
   const emptyForm: ProfessorFormValues = {
     fname: "",
     mname: "",
@@ -438,29 +468,37 @@ export function ProfessorsView() {
     slots: SlotDraft[],
   ) => {
     const existing = availability.filter((a) => a.employee_id === employeeId);
-    await Promise.all(
-      existing.map((a) =>
-        fetch(`/api/availability/${a.availability_id}`, { method: "DELETE" }),
-      ),
-    );
-    await Promise.all(
-      slots.map((s) =>
-        fetch("/api/availability", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            employee_id: employeeId,
-            day_id: s.day_id,
-            start_time: `${String(s.start_hour).padStart(2, "0")}:00`,
-            end_time: `${String(s.end_hour).padStart(2, "0")}:00`,
-          }),
+    for (const a of existing) {
+      const r = await fetch(`/api/availability/${a.availability_id}`, {
+        method: "DELETE",
+      });
+      if (!r.ok && r.status !== 404)
+        throw new Error("Could not update availability.");
+    }
+    for (const s of slots) {
+      const r = await fetch("/api/availability", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          employee_id: employeeId,
+          day_id: s.day_id,
+          start_time: `${String(s.start_hour).padStart(2, "0")}:00`,
+          end_time: `${String(s.end_hour).padStart(2, "0")}:00`,
         }),
-      ),
-    );
+      });
+      if (!r.ok) throw new Error("Could not update availability.");
+    }
   };
 
   const handleSubmit = async (values: ProfessorFormValues) => {
-    if (!values.fname || !values.lname || !values.department) return;
+    if (
+      savingRef.current ||
+      !values.fname ||
+      !values.lname ||
+      !values.department
+    )
+      return;
+    savingRef.current = true;
     try {
       const res = await fetch("/api/employees", {
         method: "POST",
@@ -490,7 +528,12 @@ export function ProfessorsView() {
       fetchAll();
     } catch (err) {
       console.error("Failed to create Instructor", err);
-      toast.error("Could not add the Instructor.");
+      toast.error(
+        err instanceof Error ? err.message : "Could not add the Instructor.",
+      );
+      fetchAll();
+    } finally {
+      savingRef.current = false;
     }
   };
 
@@ -500,8 +543,15 @@ export function ProfessorsView() {
   };
 
   const saveEdit = async (values: ProfessorFormValues) => {
-    if (!editingId || !values.fname || !values.lname || !values.department)
+    if (
+      savingRef.current ||
+      !editingId ||
+      !values.fname ||
+      !values.lname ||
+      !values.department
+    )
       return;
+    savingRef.current = true;
     try {
       const res = await fetch(`/api/employees/${editingId}`, {
         method: "PUT",
@@ -531,7 +581,12 @@ export function ProfessorsView() {
       fetchAll();
     } catch (err) {
       console.error("Failed to update Instructor", err);
-      toast.error("Could not update the Instructor.");
+      toast.error(
+        err instanceof Error ? err.message : "Could not update the Instructor.",
+      );
+      fetchAll();
+    } finally {
+      savingRef.current = false;
     }
   };
 
@@ -540,11 +595,13 @@ export function ProfessorsView() {
   };
 
   const removeProfessor = async (id: number) => {
+    setLoading(true);
     try {
       const res = await fetch(`/api/employees/${id}`, { method: "DELETE" });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         toast.error(data.error || "Failed to delete Instructor");
+        setLoading(false);
         return;
       }
       toast.success("Instructor deleted");
@@ -553,6 +610,7 @@ export function ProfessorsView() {
     } catch (err) {
       console.error("Failed to delete Instructor", err);
       toast.error("Failed to delete Instructor");
+      setLoading(false);
     }
   };
 
@@ -563,6 +621,7 @@ export function ProfessorsView() {
 
   const removeSelected = async () => {
     const ids = [...selected];
+    setLoading(true);
     const failed: number[] = [];
     let firstError = "";
     for (const id of ids) {
@@ -775,6 +834,11 @@ export function ProfessorsView() {
                       <div className="flex gap-1.5 flex-wrap">
                         {availability
                           .filter((a) => a.employee_id === p.employee_id)
+                          .sort(
+                            (a, b) =>
+                              a.day_id - b.day_id ||
+                              a.start_time.localeCompare(b.start_time),
+                          )
                           .map((a) => (
                             <span
                               key={a.availability_id}

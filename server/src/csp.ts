@@ -35,11 +35,14 @@ export function hasHardViolations(violations: ConstraintViolation[]): boolean {
   return violations.some((v) => HARD_VIOLATION_TYPES.has(v.type));
 }
 
+const tmCache = new Map<string, number>();
 function toMinutes(time: string): number {
-  const parts = time.split(":").map(Number);
-  const h = parts[0] ?? 0;
-  const m = parts[1] ?? 0;
-  return h * 60 + m;
+  let v = tmCache.get(time);
+  if (v === undefined) {
+    const p = time.split(":").map(Number);
+    tmCache.set(time, (v = (p[0] ?? 0) * 60 + (p[1] ?? 0)));
+  }
+  return v;
 }
 
 function buildCtx(input: SchedulingInput) {
@@ -74,8 +77,18 @@ function getCtx(input: SchedulingInput) {
 export function evaluateFitness(
   assignments: ClassAssignment[],
   input: SchedulingInput,
+  detailed = true,
 ): FitnessResult {
   const violations: ConstraintViolation[] = [];
+  let fitness = 0;
+  const add = (
+    type: ConstraintViolation["type"],
+    weight: number,
+    msg: () => string,
+  ) => {
+    fitness += weight;
+    if (detailed) violations.push({ type, weight, message: msg() });
+  };
 
   const {
     roomMap,
@@ -105,27 +118,30 @@ export function evaluateFitness(
         if (!(startMin[i]! < endMin[j]! && startMin[j]! < endMin[i]!)) continue;
 
         if (a.room_id === b.room_id) {
-          violations.push({
-            type: "ROOM_CONFLICT",
-            message: `Room ${a.room_id} double-booked on day ${a.day_id} between (${a.course_code}) and (${b.course_code})`,
-            weight: WEIGHTS.ROOM_CONFLICT,
-          });
+          add(
+            "ROOM_CONFLICT",
+            WEIGHTS.ROOM_CONFLICT,
+            () =>
+              `Room ${a.room_id} double-booked on day ${a.day_id} between (${a.course_code}) and (${b.course_code})`,
+          );
         }
 
         if (a.employee_id !== null && a.employee_id === b.employee_id) {
-          violations.push({
-            type: "EMPLOYEE_CONFLICT",
-            message: `Employee ${a.employee_id} double-booked on day ${a.day_id} between (${a.course_code}) and (${b.course_code})`,
-            weight: WEIGHTS.EMPLOYEE_CONFLICT,
-          });
+          add(
+            "EMPLOYEE_CONFLICT",
+            WEIGHTS.EMPLOYEE_CONFLICT,
+            () =>
+              `Employee ${a.employee_id} double-booked on day ${a.day_id} between (${a.course_code}) and (${b.course_code})`,
+          );
         }
 
         if (a.section_id === b.section_id) {
-          violations.push({
-            type: "SECTION_CONFLICT",
-            message: `Section ${a.section_id} double-booked on day ${a.day_id} between (${a.course_code}) and (${b.course_code})`,
-            weight: WEIGHTS.SECTION_CONFLICT,
-          });
+          add(
+            "SECTION_CONFLICT",
+            WEIGHTS.SECTION_CONFLICT,
+            () =>
+              `Section ${a.section_id} double-booked on day ${a.day_id} between (${a.course_code}) and (${b.course_code})`,
+          );
         }
       }
     }
@@ -136,13 +152,13 @@ export function evaluateFitness(
     const section = sectionMap.get(assignment.section_id);
     if (room && section && section.number_of_students > room.capacity) {
       const overflow = section.number_of_students - room.capacity;
-      violations.push({
-        type: "ROOM_CAPACITY_EXCEEDED",
-        message: `Section ${assignment.section_id} (${section.number_of_students} students) exceeds Room ${room.room_number} capacity (${room.capacity})`,
-        weight: WEIGHTS.ROOM_CAPACITY_EXCEEDED + overflow * 2,
-      });
+      add(
+        "ROOM_CAPACITY_EXCEEDED",
+        WEIGHTS.ROOM_CAPACITY_EXCEEDED + overflow * 2,
+        () =>
+          `Section ${assignment.section_id} (${section.number_of_students} students) exceeds Room ${room.room_number} capacity (${room.capacity})`,
+      );
     }
-
     const course = courseMap.get(assignment.course_code);
     if (room && course && room.type) {
       const courseType = course.course_type_description.toLowerCase();
@@ -152,11 +168,12 @@ export function evaluateFitness(
         assignment.session_number === 2 &&
         roomType === "lecture";
       if (courseType !== roomType && !isLabSession2InLectureRoom) {
-        violations.push({
-          type: "ROOM_TYPE_MISMATCH",
-          message: `Course ${assignment.course_code} (${course.course_type_description}) assigned to Room ${room.room_number} (${room.type})`,
-          weight: WEIGHTS.ROOM_TYPE_MISMATCH,
-        });
+        add(
+          "ROOM_TYPE_MISMATCH",
+          WEIGHTS.ROOM_TYPE_MISMATCH,
+          () =>
+            `Course ${assignment.course_code} (${course.course_type_description}) assigned to Room ${room.room_number} (${room.type})`,
+        );
       }
 
       const homeRoomNumbers = section
@@ -171,23 +188,12 @@ export function evaluateFitness(
             n.toLowerCase().trim() === room.room_number.toLowerCase().trim(),
         )
       ) {
-        violations.push({
-          type: "HOME_LAB_PREFERENCE_UNMET",
-          message: `Session 1 of ${assignment.course_code} (Section ${assignment.section_id}) assigned to Room ${room.room_number} instead of a home lab (${homeRoomNumbers.join(", ")})`,
-          weight: WEIGHTS.HOME_LAB_PREFERENCE_UNMET,
-        });
-      }
-
-      if (
-        courseType === "laboratory" &&
-        assignment.session_number === 2 &&
-        roomType !== "laboratory"
-      ) {
-        violations.push({
-          type: "LAB_PREFERENCE_UNMET",
-          message: `Session 2 of ${assignment.course_code} (Laboratory) assigned to Room ${room.room_number} (${room.type}) instead of a Laboratory room`,
-          weight: WEIGHTS.LAB_PREFERENCE_UNMET,
-        });
+        add(
+          "HOME_LAB_PREFERENCE_UNMET",
+          WEIGHTS.HOME_LAB_PREFERENCE_UNMET,
+          () =>
+            `Session 1 of ${assignment.course_code} (Section ${assignment.section_id}) assigned to Room ${room.room_number} instead of a home lab (${homeRoomNumbers.join(", ")})`,
+        );
       }
     }
     if (assignment.employee_id === null) continue;
@@ -204,14 +210,11 @@ export function evaluateFitness(
     });
 
     if (!isWithinAvailability) {
-      violations.push({
-        type: "EMPLOYEE_UNAVAILABLE",
-        message:
-          employeeAvailability.length === 0
-            ? `Employee ${assignment.employee_id} has no declared availability on day ${assignment.day_id}`
-            : `Employee ${assignment.employee_id} assigned outside declared availability on day ${assignment.day_id}`,
-        weight: WEIGHTS.EMPLOYEE_UNAVAILABLE,
-      });
+      add("EMPLOYEE_UNAVAILABLE", WEIGHTS.EMPLOYEE_UNAVAILABLE, () =>
+        employeeAvailability.length === 0
+          ? `Employee ${assignment.employee_id} has no declared availability on day ${assignment.day_id}`
+          : `Employee ${assignment.employee_id} assigned outside declared availability on day ${assignment.day_id}`,
+      );
     }
   }
 
@@ -240,11 +243,12 @@ export function evaluateFitness(
       employee?.max_hours_per_day != null &&
       totalHours > employee.max_hours_per_day
     ) {
-      violations.push({
-        type: "EMPLOYEE_MAX_HOURS_EXCEEDED",
-        message: `Employee ${employeeId} scheduled ${totalHours}hrs on day ${dayIdStr}, exceeding their daily max of ${employee.max_hours_per_day}hrs`,
-        weight: WEIGHTS.EMPLOYEE_MAX_HOURS_EXCEEDED,
-      });
+      add(
+        "EMPLOYEE_MAX_HOURS_EXCEEDED",
+        WEIGHTS.EMPLOYEE_MAX_HOURS_EXCEEDED,
+        () =>
+          `Employee ${employeeId} scheduled ${totalHours}hrs on day ${dayIdStr}, exceeding their daily max of ${employee.max_hours_per_day}hrs`,
+      );
     }
   }
 
@@ -254,11 +258,12 @@ export function evaluateFitness(
       employee?.max_hours_per_week != null &&
       totalHours > employee.max_hours_per_week
     ) {
-      violations.push({
-        type: "EMPLOYEE_MAX_HOURS_EXCEEDED",
-        message: `Employee ${employeeId} scheduled ${totalHours}hrs this week, exceeding their weekly max of ${employee.max_hours_per_week}hrs`,
-        weight: WEIGHTS.EMPLOYEE_MAX_HOURS_EXCEEDED,
-      });
+      add(
+        "EMPLOYEE_MAX_HOURS_EXCEEDED",
+        WEIGHTS.EMPLOYEE_MAX_HOURS_EXCEEDED,
+        () =>
+          `Employee ${employeeId} scheduled ${totalHours}hrs this week, exceeding their weekly max of ${employee.max_hours_per_week}hrs`,
+      );
     }
   }
 
@@ -287,11 +292,12 @@ export function evaluateFitness(
         const excessMinutes = gapMinutes - GAP_GRACE_MINUTES;
         const penaltyUnits = Math.ceil(excessMinutes / 30);
         const [sectionIdStr, dayIdStr] = key.split("-");
-        violations.push({
-          type: "LONG_VACANT_GAP",
-          message: `Section ${sectionIdStr} has a ${gapMinutes}-minute gap on day ${dayIdStr} between (${current.course_code}) and (${next.course_code})`,
-          weight: penaltyUnits * WEIGHTS.LONG_VACANT_GAP_PER_30MIN,
-        });
+        add(
+          "LONG_VACANT_GAP",
+          penaltyUnits * WEIGHTS.LONG_VACANT_GAP_PER_30MIN,
+          () =>
+            `Section ${sectionIdStr} has a ${gapMinutes}-minute gap on day ${dayIdStr} between (${current.course_code}) and (${next.course_code})`,
+        );
       }
     }
   }
@@ -303,22 +309,23 @@ export function evaluateFitness(
       sessionDayKey.set(key, a.day_id);
     } else if (prev !== a.day_id) {
     } else {
-      violations.push({
-        type: "SAME_COURSE_SAME_DAY",
-        message: `Section ${a.section_id}: both sessions of ${a.course_code} are on day ${a.day_id}`,
-        weight: WEIGHTS.SAME_COURSE_SAME_DAY,
-      });
+      add(
+        "SAME_COURSE_SAME_DAY",
+        WEIGHTS.SAME_COURSE_SAME_DAY,
+        () =>
+          `Section ${a.section_id}: both sessions of ${a.course_code} are on day ${a.day_id}`,
+      );
     }
   }
-  const fitness = violations.reduce((sum, v) => sum + v.weight, 0);
   return { fitness, violations };
 }
 
 export function scoreCandidate(
   candidate: Candidate,
   input: SchedulingInput,
+  detailed = true,
 ): FitnessResult {
-  const result = evaluateFitness(candidate.assignments, input);
+  const result = evaluateFitness(candidate.assignments, input, detailed);
   candidate.fitness = result.fitness;
   return result;
 }

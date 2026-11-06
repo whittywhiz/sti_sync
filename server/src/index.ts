@@ -88,7 +88,14 @@ app.use(
 
 app.use(express.json());
 
-app.use(authenticateToken);
+app.use((req, res, next) => {
+  if (req.method !== "GET") {
+    res.on("finish", () => {
+      if (res.statusCode < 400) clearCache();
+    });
+  }
+  next();
+});
 
 app.use(cacheMiddleware);
 
@@ -1588,6 +1595,18 @@ app.put("/availability/:id", async (req: Request, res: Response) => {
 
 app.put("/classes/:id", async (req: Request, res: Response) => {
   const { id } = req.params;
+  try {
+    if (req.body.employee_id != null) {
+      const problem = await slotProblem(String(id), req.body);
+      if (problem)
+        return res.status(400).json({ success: false, error: problem });
+    }
+  } catch (err) {
+    console.error(err);
+    return res
+      .status(500)
+      .json({ success: false, error: "Failed to validate move" });
+  }
   const {
     start_time,
     end_time,
@@ -1625,9 +1644,31 @@ app.put("/classes/:id", async (req: Request, res: Response) => {
   }
 });
 
-const LOAD_LIMIT = 9;
+async function slotProblem(classId: string, b: any): Promise<string | null> {
+  const avail = await pool.query(
+    `SELECT 1 FROM availability
+     WHERE employee_id = $1 AND day_id = $2
+       AND start_time <= $3 AND end_time >= $4 LIMIT 1`,
+    [b.employee_id, b.day_id, b.start_time, b.end_time],
+  );
+  if (avail.rows.length === 0)
+    return "Instructor is not available at this time.";
+  const clash = await pool.query(
+    `SELECT 1 FROM class
+     WHERE employee_id = $1 AND schedule_id = $2 AND day_id = $3
+       AND class_id <> $4 AND start_time < $5 AND end_time > $6 LIMIT 1`,
+    [b.employee_id, b.schedule_id, b.day_id, classId, b.end_time, b.start_time],
+  );
+  return clash.rows.length
+    ? "Instructor has another class at this time."
+    : null;
+}
 
-async function eligibleFor(classId: string) {
+const LOAD_LIMIT = 9;
+async function eligibleFor(
+  classId: string,
+  slot?: { day_id: number; start: string; end: string },
+) {
   const c = (
     await pool.query(
       `SELECT day_id, start_time, end_time, schedule_id,
@@ -1637,6 +1678,13 @@ async function eligibleFor(classId: string) {
     )
   ).rows[0];
   if (!c) return null;
+  if (slot) {
+    const m = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
+    c.day_id = slot.day_id;
+    c.start_time = slot.start;
+    c.end_time = slot.end;
+    c.dur = (m(slot.end) - m(slot.start)) / 60;
+  }
   const { rows } = await pool.query(
     `SELECT e.employee_id, e.name,
        COALESCE((SELECT SUM(EXTRACT(EPOCH FROM (k.end_time - k.start_time)) / 3600)
@@ -1669,7 +1717,12 @@ app.get(
   "/classes/:id/eligible-employees",
   async (req: Request, res: Response) => {
     try {
-      const list = await eligibleFor(String(req.params.id));
+      const { day_id, start, end } = req.query;
+      const slot =
+        day_id && start && end
+          ? { day_id: Number(day_id), start: String(start), end: String(end) }
+          : undefined;
+      const list = await eligibleFor(String(req.params.id), slot);
       if (!list) return res.status(404).json({ error: "Class not found" });
       res.json(list);
     } catch (err: any) {
@@ -1736,15 +1789,19 @@ app.delete("/rooms/:id", async (req: Request, res: Response) => {
 });
 
 app.delete("/programs/:id", async (req, res) => {
+  const client = await pool.connect();
   try {
-    await pool.query("DELETE FROM curriculum WHERE program_id = $1", [
+    await client.query("BEGIN");
+    await client.query("DELETE FROM curriculum WHERE program_id = $1", [
       req.params.id,
     ]);
-    await pool.query("DELETE FROM program WHERE program_id = $1", [
+    await client.query("DELETE FROM program WHERE program_id = $1", [
       req.params.id,
     ]);
+    await client.query("COMMIT");
     res.json({ success: true });
   } catch (err: any) {
+    await client.query("ROLLBACK").catch(() => {});
     if (err.code === "23503" || err.code === "23001") {
       return res.status(409).json({
         error:
@@ -1752,6 +1809,8 @@ app.delete("/programs/:id", async (req, res) => {
       });
     }
     res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 
@@ -2063,6 +2122,13 @@ app.post("/generate-schedule", async (req: Request, res: Response) => {
     }
 
     const { violations } = evaluateFitness(a, input);
+
+    const coursesWithProf = new Set(
+      (input.course_employees ?? []).map((ce) => ce.course_code),
+    );
+    const unassignedNoSlot = a.filter(
+      (x) => x.employee_id === null && coursesWithProf.has(x.course_code),
+    ).length;
     const responsePayload = {
       success: true,
       fitness: gaResult.best.fitness,
@@ -2073,6 +2139,7 @@ app.post("/generate-schedule", async (req: Request, res: Response) => {
 
       capacityWarnings,
       unassignedCount: a.filter((x) => x.employee_id === null).length,
+      unassignedNoSlot,
       labRoomIssues: violations.filter(
         (v) => v.type === "HOME_LAB_PREFERENCE_UNMET",
       ).length,

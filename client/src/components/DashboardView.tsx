@@ -310,7 +310,7 @@ export function DashboardView() {
             <div className="flex items-center gap-2">
               <Users className="w-4 h-4 text-success" />
               <h3 className="font-heading font-semibold">
-                Professors Available Now
+                Instructors Available Now
               </h3>
             </div>
             <span className="text-xs px-2 py-0.5 rounded-md bg-success/10 text-success font-semibold">

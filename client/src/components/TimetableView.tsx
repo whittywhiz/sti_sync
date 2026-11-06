@@ -105,6 +105,7 @@ function getVacantSlots(
   allDays: DayRow[],
   allAvailability: AvailabilityRow[],
   allEmployees: EmployeeRow[],
+  employeeId: number | null = entry.employee_id,
 ): VacantSlot[] {
   const duration =
     timeToHourFloat(entry.end_time) - timeToHourFloat(entry.start_time);
@@ -126,13 +127,13 @@ function getVacantSlots(
   const EPSILON = 0.01;
 
   const employee =
-    entry.employee_id === null
+    employeeId === null
       ? undefined
-      : allEmployees.find((e) => e.employee_id === entry.employee_id);
+      : allEmployees.find((e) => e.employee_id === employeeId);
   const otherClassesForEmployee =
-    entry.employee_id === null
+    employeeId === null
       ? []
-      : others.filter((c) => c.employee_id === entry.employee_id);
+      : others.filter((c) => c.employee_id === employeeId);
   const hoursByDay = new Map<number, number>();
   let weeklyHours = 0;
   for (const c of otherClassesForEmployee) {
@@ -179,8 +180,8 @@ function getVacantSlots(
 
         const employeeConflict = others.some(
           (c) =>
-            entry.employee_id !== null &&
-            c.employee_id === entry.employee_id &&
+            employeeId !== null &&
+            c.employee_id === employeeId &&
             c.day_id === day.day_id &&
             start < timeToHourFloat(c.end_time) &&
             end > timeToHourFloat(c.start_time),
@@ -197,10 +198,10 @@ function getVacantSlots(
         if (sectionConflict) continue;
 
         const isAvailable =
-          entry.employee_id === null ||
+          employeeId === null ||
           allAvailability.some(
             (a) =>
-              a.employee_id === entry.employee_id &&
+              a.employee_id === employeeId &&
               a.day_id === day.day_id &&
               start >= timeToHourFloat(a.start_time) &&
               end <= timeToHourFloat(a.end_time),
@@ -523,6 +524,10 @@ export function TimetableView() {
   const [moving, setMoving] = useState(false);
   const [slotDayFilter, setSlotDayFilter] = useState<string>("All Days");
   const [assignEntry, setAssignEntry] = useState<ClassRow | null>(null);
+  const [assignEmp, setAssignEmp] = useState<number | null | undefined>(
+    undefined,
+  );
+  useEffect(() => setAssignEmp(undefined), [assignEntry]);
   const [panelPos, setPanelPos] = useState<{ top: number; left: number }>({
     top: 12,
     left: 12,
@@ -577,6 +582,13 @@ export function TimetableView() {
     }
   };
 
+  const refreshClasses = async () => {
+    try {
+      const r = await fetch("/api/classes");
+      if (r.ok) setClasses(await r.json());
+    } catch {}
+  };
+
   const openHistory = async () => {
     setHistoryOpen(true);
     try {
@@ -588,7 +600,7 @@ export function TimetableView() {
     }
   };
 
-  const exportHistory = async (h: HistoryRow, kind: "pdf" | "xls" | "xlsx") => {
+  const exportHistory = async (h: HistoryRow, kind: "pdf" | "xlsx" | "csv") => {
     setExportingId(h.schedule_id);
     try {
       const res = await fetch(`/api/classes?schedule_id=${h.schedule_id}`);
@@ -638,13 +650,32 @@ export function TimetableView() {
           schedule_id: previous.schedule_id,
         }),
       });
-      if (!res.ok) throw new Error("Move failed");
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || "Move failed");
+      }
       setSelectedEntry(null);
 
-      await fetchClasses(false);
+      setClasses((prev) =>
+        prev.map((c) =>
+          c.class_id === classId
+            ? {
+                ...c,
+                start_time: slot.start_time,
+                end_time: slot.end_time,
+                room_id: slot.room_id,
+                room: slot.room_number,
+                day_id: slot.day_id,
+                day: slot.day,
+                employee_id: employeeId,
+              }
+            : c,
+        ),
+      );
+      refreshClasses();
 
       toast.success(
-        `${previous.course_code} moved to ${slot.day} · ${formatTime12hr(
+        `${previous.course_code} moved to${slot.day} · ${formatTime12hr(
           slot.start_time,
         )}–${formatTime12hr(slot.end_time)} · ${slot.room_number}`,
         {
@@ -656,7 +687,11 @@ export function TimetableView() {
       return true;
     } catch (err) {
       console.error("Failed to move class", err);
-      toast.error("Failed to move class. Please try again.");
+      toast.error(
+        err instanceof Error && err.message !== "Move failed"
+          ? err.message
+          : "Failed to move class. Please try again.",
+      );
       return false;
     } finally {
       setMoving(false);
@@ -679,16 +714,29 @@ export function TimetableView() {
       toast.error("Failed to undo. Please try again.");
     }
   };
-
-  const handleAssignDone = (entry: ClassRow, msg?: string) => {
+  const handleAssignDone = (
+    entry: ClassRow,
+    msg?: string,
+    empId?: number | null,
+    empName?: string,
+  ) => {
     const id = entry.class_id;
     const prevEmp = entry.employee_id;
     setAssignEntry(null);
-    fetchClasses(false);
+    if (empId !== undefined) {
+      setClasses((prev) =>
+        prev.map((c) =>
+          c.class_id === id
+            ? { ...c, employee_id: empId, professor: empName ?? "Unassigned" }
+            : c,
+        ),
+      );
+    }
+    refreshClasses();
     if (msg)
       toast.success(msg, {
         duration: 10000,
-        action: { label: "View", onClick: () => goToClass(id) },
+
         cancel: { label: "Undo", onClick: () => undoAssign(id, prevEmp) },
       });
   };
@@ -894,9 +942,18 @@ export function TimetableView() {
             allDays,
             allAvailability,
             allEmployees,
+            assignEmp === undefined ? assignEntry.employee_id : assignEmp,
           )
         : [],
-    [assignEntry, classes, allRooms, allDays, allAvailability, allEmployees],
+    [
+      assignEntry,
+      assignEmp,
+      classes,
+      allRooms,
+      allDays,
+      allAvailability,
+      allEmployees,
+    ],
   );
   const allVacantSlots = useMemo(() => {
     if (!selectedEntry) return [];
@@ -991,7 +1048,7 @@ export function TimetableView() {
                   </td>
                   <td className="py-2">
                     <div className="flex gap-1.5">
-                      {(["pdf", "xls", "xlsx"] as const).map((k) => (
+                      {(["pdf", "xlsx", "csv"] as const).map((k) => (
                         <Button
                           key={k}
                           variant="outline"
@@ -1000,7 +1057,7 @@ export function TimetableView() {
                           disabled={exportingId === h.schedule_id}
                           onClick={() => exportHistory(h, k)}
                         >
-                          {k === "pdf" ? "PDF" : k === "xls" ? "Excel" : "XLSX"}
+                          {k === "pdf" ? "PDF" : k === "xlsx" ? "Excel" : "CSV"}
                         </Button>
                       ))}
                     </div>
@@ -1069,8 +1126,11 @@ export function TimetableView() {
           <AssignInstructorModal
             cls={assignEntry}
             vacantSlots={assignSlots}
+            onEmpChange={setAssignEmp}
             onClose={() => setAssignEntry(null)}
-            onDone={(msg) => handleAssignDone(assignEntry, msg)}
+            onDone={(msg, empId, empName) =>
+              handleAssignDone(assignEntry, msg, empId, empName)
+            }
             onMove={(slot, empId) => handleMoveClass(assignEntry, slot, empId)}
           />
         )}
@@ -1329,17 +1389,15 @@ export function TimetableView() {
                                 </p>
                               )}
                               {isCompact ? (
-                                <p
-                                  className={`text-[10px] font-medium truncate ${
-                                    isUnassigned
-                                      ? "text-amber-700 font-semibold"
-                                      : "text-slate-600"
-                                  }`}
-                                >
-                                  {isUnassigned
-                                    ? "Unassigned"
-                                    : entry.professor}
-                                </p>
+                                isUnassigned ? (
+                                  <span className="inline-flex items-center text-[9px] font-semibold text-amber-800 bg-amber-100 rounded px-1.5 py-0.5 w-fit leading-none">
+                                    + Add Prof
+                                  </span>
+                                ) : (
+                                  <p className="text-[10px] font-medium truncate text-slate-600">
+                                    {entry.professor}
+                                  </p>
+                                )
                               ) : (
                                 <>
                                   <p className="text-[9px] text-slate-500 truncate leading-tight">
@@ -1537,6 +1595,7 @@ export function TimetableView() {
         <AssignInstructorModal
           cls={assignEntry}
           vacantSlots={assignSlots}
+          onEmpChange={setAssignEmp}
           onClose={() => setAssignEntry(null)}
           onDone={(msg) => handleAssignDone(assignEntry, msg)}
           onMove={(slot, empId) => handleMoveClass(assignEntry, slot, empId)}

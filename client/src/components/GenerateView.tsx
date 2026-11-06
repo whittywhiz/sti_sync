@@ -36,6 +36,7 @@ interface GenerateResult {
   error?: string;
   capacityWarnings?: string[];
   unassignedCount?: number;
+  unassignedNoSlot?: number;
   labRoomIssues?: number;
   longGaps?: number;
 }
@@ -174,7 +175,7 @@ export function GenerateView() {
             • Rooms that fit the section size are preferred; any section placed
             in a smaller room is flagged after generating
           </p>
-          <p>• No professor, room, or section double-booking</p>
+          <p>• No instructor, room, or section double-booking</p>
           <p>• Lab courses go to Laboratory rooms, PE to the Gym, etc.</p>
         </div>
         <Button
@@ -235,9 +236,14 @@ export function GenerateView() {
                 • {result.unassignedCount} classes have no professor yet. Assign
                 them from the Timetable.
               </p>
+              {(result.unassignedNoSlot ?? 0) > 0 && (
+                <p className="text-sm text-muted-foreground">
+                  • {result.unassignedNoSlot} of these have a professor linked,
+                  but none were free at any valid time
+                </p>
+              )}
             </div>
           )}
-
           {result.capacityWarnings && result.capacityWarnings.length > 0 && (
             <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 space-y-1">
               <p className="text-sm font-medium">Room capacity warnings</p>
@@ -301,7 +307,9 @@ export function GenerateView() {
           <div
             role="status"
             aria-busy="true"
-            className="fixed inset-y-0 right-0 left-64 z-[60] flex cursor-wait items-center justify-center bg-gray-200/60"
+            className={`fixed inset-y-0 right-0 ${
+              generating ? "left-0 z-[300]" : "left-64 z-[60]"
+            } flex cursor-wait items-center justify-center bg-gray-200/60`}
           >
             <div className="flex items-center gap-3 rounded-lg bg-white px-5 py-3 shadow-md">
               <Loader2 className="h-5 w-5 animate-spin text-gray-700" />

@@ -89,8 +89,9 @@ function RoomForm({ initial, onSave, onCancel, stacked }: RoomFormProps) {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="Lecture">Lecture</SelectItem>
+            <SelectItem value="all">All types</SelectItem>
             <SelectItem value="Laboratory">Laboratory</SelectItem>
+            <SelectItem value="Lecture">Lecture</SelectItem>
             <SelectItem value="PE">PE</SelectItem>
           </SelectContent>
         </Select>
@@ -124,6 +125,7 @@ export function RoomsView() {
   const [selected, setSelected] = useState<number[]>([]);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [typeFilter, setTypeFilter] = useState("");
+  const [deleting, setDeleting] = useState(false);
 
   const emptyRoom: RoomFormValues = {
     room_number: "",
@@ -201,6 +203,7 @@ export function RoomsView() {
   };
 
   const removeRoom = async (id: number) => {
+    setDeleting(true);
     try {
       const res = await fetch(`/api/rooms/${id}`, { method: "DELETE" });
       if (!res.ok) {
@@ -214,6 +217,8 @@ export function RoomsView() {
     } catch (err) {
       console.error("Failed to delete room", err);
       toast.error("Failed to delete room");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -223,6 +228,7 @@ export function RoomsView() {
     );
 
   const removeSelected = async () => {
+    setDeleting(true);
     const ids = [...selected];
     const failed: number[] = [];
     let firstError = "";
@@ -252,6 +258,7 @@ export function RoomsView() {
       );
     }
     setSelected(failed);
+    setDeleting(false);
     fetchRooms();
   };
 
@@ -311,8 +318,9 @@ export function RoomsView() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All types</SelectItem>
-              <SelectItem value="Lecture">Lecture</SelectItem>
               <SelectItem value="Laboratory">Laboratory</SelectItem>
+              <SelectItem value="Lecture">Lecture</SelectItem>
+
               <SelectItem value="PE">PE</SelectItem>
             </SelectContent>
           </Select>
@@ -472,7 +480,7 @@ export function RoomsView() {
         }}
         onCancel={() => setBulkDeleteOpen(false)}
       />
-      {loading &&
+      {(loading || deleting) &&
         createPortal(
           <div
             role="status"
@@ -481,7 +489,9 @@ export function RoomsView() {
           >
             <div className="flex items-center gap-3 rounded-lg bg-white px-5 py-3 shadow-md">
               <Loader2 className="h-5 w-5 animate-spin text-gray-700" />
-              <span className="text-sm text-gray-700">Loading...</span>
+              <span className="text-sm text-gray-700">
+                {deleting ? "Deleting..." : "Loading..."}
+              </span>
             </div>
           </div>,
           document.body,
