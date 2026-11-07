@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Plus, Trash2, Pencil, Check, X, Search, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -89,7 +89,6 @@ function RoomForm({ initial, onSave, onCancel, stacked }: RoomFormProps) {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All types</SelectItem>
             <SelectItem value="Laboratory">Laboratory</SelectItem>
             <SelectItem value="Lecture">Lecture</SelectItem>
             <SelectItem value="PE">PE</SelectItem>
@@ -125,7 +124,20 @@ export function RoomsView() {
   const [selected, setSelected] = useState<number[]>([]);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [typeFilter, setTypeFilter] = useState("");
-  const [deleting, setDeleting] = useState(false);
+  const [pending, setPending] = useState<number[]>([]);
+  const [highlightId, setHighlightId] = useState<number | null>(null);
+  const queue = useRef(new Map<ReturnType<typeof setTimeout>, number[]>());
+
+  useEffect(() => {
+    const flush = () =>
+      queue.current.forEach((ids) =>
+        ids.forEach((id) =>
+          fetch(`/api/rooms/${id}`, { method: "DELETE", keepalive: true }),
+        ),
+      );
+    window.addEventListener("beforeunload", flush);
+    return () => window.removeEventListener("beforeunload", flush);
+  }, []);
 
   const emptyRoom: RoomFormValues = {
     room_number: "",
@@ -163,9 +175,15 @@ export function RoomsView() {
         toast.error(data.error ?? "Could not add the room.");
         return;
       }
-      toast.success("Room added successfully");
+      const created = await res.json().catch(() => null);
+      const newId: number | undefined = created?.room_id;
       setShowForm(false);
-      fetchRooms();
+      await fetchRooms();
+      toast.success("Room added successfully", {
+        action: newId
+          ? { label: "View", onClick: () => goToRoom(newId) }
+          : undefined,
+      });
     } catch (err) {
       console.error("Failed to create room", err);
       toast.error("Could not add the room.");
@@ -202,67 +220,67 @@ export function RoomsView() {
     setEditingId(null);
   };
 
-  const removeRoom = async (id: number) => {
-    setDeleting(true);
-    try {
-      const res = await fetch(`/api/rooms/${id}`, { method: "DELETE" });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        toast.error(data.error ?? "Failed to delete room");
-        return;
+  const deleteWithUndo = (ids: number[]) => {
+    setPending((p) => [...p, ...ids]);
+    setSelected((s) => s.filter((x) => !ids.includes(x)));
+
+    const unhide = () => setPending((p) => p.filter((x) => !ids.includes(x)));
+
+    const timer = setTimeout(async () => {
+      queue.current.delete(timer);
+      const failed: number[] = [];
+      let firstError = "";
+      for (const id of ids) {
+        try {
+          const res = await fetch(`/api/rooms/${id}`, { method: "DELETE" });
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            failed.push(id);
+            if (!firstError) firstError = data.error ?? "";
+          }
+        } catch {
+          failed.push(id);
+        }
       }
-      toast.success("Room deleted");
-      setSelected((s) => s.filter((x) => x !== id));
-      fetchRooms();
-    } catch (err) {
-      console.error("Failed to delete room", err);
-      toast.error("Failed to delete room");
-    } finally {
-      setDeleting(false);
-    }
+      if (failed.length > 0) {
+        toast.error(firstError || "Failed to delete room");
+      }
+      await fetchRooms();
+      unhide();
+    }, 5000);
+    queue.current.set(timer, ids);
+
+    toast(`Deleted ${ids.length} room${ids.length !== 1 ? "s" : ""}`, {
+      duration: 5000,
+      action: {
+        label: "Undo",
+        onClick: () => {
+          clearTimeout(timer);
+          queue.current.delete(timer);
+          unhide();
+        },
+      },
+    });
   };
 
+  const goToRoom = (id: number) => {
+    setSearch("");
+    setTypeFilter("");
+    setTimeout(() => {
+      document
+        .getElementById(`room-${id}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      setHighlightId(id);
+      setTimeout(() => setHighlightId(null), 2500);
+    }, 100);
+  };
   const toggleSelect = (id: number) =>
     setSelected((s) =>
       s.includes(id) ? s.filter((x) => x !== id) : [...s, id],
     );
 
-  const removeSelected = async () => {
-    setDeleting(true);
-    const ids = [...selected];
-    const failed: number[] = [];
-    let firstError = "";
-    for (const id of ids) {
-      try {
-        const res = await fetch(`/api/rooms/${id}`, { method: "DELETE" });
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          failed.push(id);
-          if (!firstError) firstError = data.error ?? "";
-        }
-      } catch {
-        failed.push(id);
-      }
-    }
-    const deleted = ids.length - failed.length;
-    if (deleted > 0) {
-      toast.success(`Deleted ${deleted} room${deleted !== 1 ? "s" : ""}`);
-    }
-    if (failed.length > 0) {
-      const names = rooms
-        .filter((r) => failed.includes(r.room_id))
-        .map((r) => r.room_number)
-        .join(", ");
-      toast.error(
-        `Could not delete ${names}${firstError ? `: ${firstError}` : ""}`,
-      );
-    }
-    setSelected(failed);
-    setDeleting(false);
-    fetchRooms();
-  };
-
   const filtered = rooms.filter((r) => {
+    if (pending.includes(r.room_id)) return false;
     if (typeFilter && r.type !== typeFilter) return false;
     if (!search) return true;
     const q = search.toLowerCase();
@@ -383,12 +401,17 @@ export function RoomsView() {
                 {sorted.map((r) => (
                   <motion.tr
                     key={r.room_id}
+                    id={`room-${r.room_id}`}
                     initial={search ? false : { opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
                     transition={{ duration: 0.15 }}
                     className={`border-b last:border-0 hover:bg-muted/40 ${
-                      selected.includes(r.room_id) ? "bg-primary/5" : ""
+                      highlightId === r.room_id
+                        ? "bg-yellow-100"
+                        : selected.includes(r.room_id)
+                          ? "bg-primary/5"
+                          : ""
                     }`}
                   >
                     <td className="px-4 py-3">
@@ -464,7 +487,7 @@ export function RoomsView() {
         title="Delete this room?"
         description={`Are you sure you want to delete ${deleteTarget?.room_number}?`}
         onConfirm={() => {
-          if (deleteTarget) removeRoom(deleteTarget.room_id);
+          if (deleteTarget) deleteWithUndo([deleteTarget.room_id]);
           setDeleteTarget(null);
         }}
         onCancel={() => setDeleteTarget(null)}
@@ -476,11 +499,11 @@ export function RoomsView() {
         description="Rooms used by scheduled classes can't be deleted and will stay selected."
         onConfirm={() => {
           setBulkDeleteOpen(false);
-          removeSelected();
+          deleteWithUndo(selected);
         }}
         onCancel={() => setBulkDeleteOpen(false)}
       />
-      {(loading || deleting) &&
+      {loading &&
         createPortal(
           <div
             role="status"
@@ -489,9 +512,7 @@ export function RoomsView() {
           >
             <div className="flex items-center gap-3 rounded-lg bg-white px-5 py-3 shadow-md">
               <Loader2 className="h-5 w-5 animate-spin text-gray-700" />
-              <span className="text-sm text-gray-700">
-                {deleting ? "Deleting..." : "Loading..."}
-              </span>
+              <span className="text-sm text-gray-700">Loading...</span>
             </div>
           </div>,
           document.body,

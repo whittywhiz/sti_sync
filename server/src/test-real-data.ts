@@ -300,6 +300,32 @@ async function main() {
       }
       console.log(l, "day", d.day_id, "free:", free.join(", "));
     }
+  console.log(
+    "9-hour violations:",
+    finalCheck.violations.filter(
+      (v) => v.type === "EMPLOYEE_NINE_HOUR_EXCEEDED",
+    ).length,
+  );
+
+  const eligibleMap = new Map<string, number[]>();
+  for (const ce of input.course_employees ?? []) {
+    if (!eligibleMap.has(ce.course_code)) eligibleMap.set(ce.course_code, []);
+    eligibleMap.get(ce.course_code)!.push(ce.employee_id);
+  }
+  const unmappedCourse = unassigned.filter(
+    (a) => !eligibleMap.has(a.course_code),
+  );
+  const mappedButUnassigned = unassigned.filter((a) =>
+    eligibleMap.has(a.course_code),
+  );
+  console.log(
+    "Unassigned, course has no professor mapping:",
+    unmappedCourse.length,
+  );
+  console.log(
+    "Unassigned, course HAS eligible professors:",
+    mappedButUnassigned.length,
+  );
   await pool.end();
 }
 

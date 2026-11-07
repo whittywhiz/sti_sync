@@ -7,7 +7,7 @@ export function authFetch(url: string, options: RequestInit = {}) {
       Authorization: `Bearer ${token}`,
     },
   }).then((res) => {
-    if (res.status === 401) {
+    if (res.status === 401 && !url.includes("/change-password")) {
       localStorage.removeItem("authToken");
       window.location.href = "/login";
     }

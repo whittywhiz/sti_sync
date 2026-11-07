@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Plus, Trash2, Pencil, Check, X, Search, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -98,7 +98,21 @@ export function ProgramsView() {
   const [deleteTarget, setDeleteTarget] = useState<Program | null>(null);
   const [selected, setSelected] = useState<number[]>([]);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  const [pending, setPending] = useState<number[]>([]);
+  const [highlightId, setHighlightId] = useState<number | null>(null);
+
+  const queue = useRef(new Map<ReturnType<typeof setTimeout>, number[]>());
+
+  useEffect(() => {
+    const flush = () =>
+      queue.current.forEach((ids) =>
+        ids.forEach((id) =>
+          fetch(`/api/programs/${id}`, { method: "DELETE", keepalive: true }),
+        ),
+      );
+    window.addEventListener("beforeunload", flush);
+    return () => window.removeEventListener("beforeunload", flush);
+  }, []);
 
   const fetchAll = async () => {
     setLoading(true);
@@ -122,6 +136,17 @@ export function ProgramsView() {
   useEffect(() => {
     fetchAll();
   }, []);
+
+  const goToProgram = (id: number) => {
+    setSearch(""); // make sure the row isn't filtered out
+    setTimeout(() => {
+      document
+        .getElementById(`program-${id}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      setHighlightId(id);
+      setTimeout(() => setHighlightId(null), 2500);
+    }, 100);
+  };
 
   const handleAdd = async (description: string, code: string) => {
     const isDuplicateName = programs.some(
@@ -157,9 +182,15 @@ export function ProgramsView() {
         toast.error(data.error ?? "Failed to create program");
         return;
       }
-      toast.success("Program added successfully");
+      const created = await res.json().catch(() => null);
+      const newId: number | undefined = created?.program_id;
       setShowForm(false);
-      fetchAll();
+      await fetchAll();
+      toast.success("Program added successfully", {
+        action: newId
+          ? { label: "View", onClick: () => goToProgram(newId) }
+          : undefined,
+      });
     } catch (err) {
       console.error("Failed to create program", err);
       toast.error("Failed to create program");
@@ -213,67 +244,56 @@ export function ProgramsView() {
       toast.error("Failed to update program");
     }
   };
+  const deleteWithUndo = (ids: number[]) => {
+    setPending((p) => [...p, ...ids]);
+    setSelected((s) => s.filter((x) => !ids.includes(x)));
 
-  const removeProgram = async (id: number) => {
-    setDeleting(true);
-    try {
-      const res = await fetch(`/api/programs/${id}`, { method: "DELETE" });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        toast.error(data.error || "Failed to delete program");
-        return;
+    const unhide = () => setPending((p) => p.filter((x) => !ids.includes(x)));
+
+    const timer = setTimeout(async () => {
+      queue.current.delete(timer);
+      const failed: number[] = [];
+      let firstError = "";
+      for (const id of ids) {
+        try {
+          const res = await fetch(`/api/programs/${id}`, { method: "DELETE" });
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            failed.push(id);
+            if (!firstError) firstError = data.error ?? "";
+          }
+        } catch {
+          failed.push(id);
+        }
       }
-      toast.success("Program deleted");
-      setSelected((s) => s.filter((x) => x !== id));
-      fetchAll();
-    } catch (err) {
-      console.error("Failed to delete program", err);
-      toast.error("Failed to delete program");
-    } finally {
-      setDeleting(false);
-    }
+      if (failed.length > 0) {
+        toast.error(firstError || "Failed to delete program");
+      }
+      await fetchAll();
+      unhide();
+    }, 5000);
+    queue.current.set(timer, ids);
+
+    toast(`Deleted ${ids.length} program${ids.length !== 1 ? "s" : ""}`, {
+      duration: 5000,
+      action: {
+        label: "Undo",
+        onClick: () => {
+          clearTimeout(timer);
+          queue.current.delete(timer);
+          unhide();
+        },
+      },
+    });
   };
+
   const toggleSelect = (id: number) =>
     setSelected((s) =>
       s.includes(id) ? s.filter((x) => x !== id) : [...s, id],
     );
 
-  const removeSelected = async () => {
-    setDeleting(true);
-    const ids = [...selected];
-    const failed: number[] = [];
-    let firstError = "";
-    for (const id of ids) {
-      try {
-        const res = await fetch(`/api/programs/${id}`, { method: "DELETE" });
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          failed.push(id);
-          if (!firstError) firstError = data.error ?? "";
-        }
-      } catch {
-        failed.push(id);
-      }
-    }
-    const deleted = ids.length - failed.length;
-    if (deleted > 0) {
-      toast.success(`Deleted ${deleted} program${deleted !== 1 ? "s" : ""}`);
-    }
-    if (failed.length > 0) {
-      const names = programs
-        .filter((p) => failed.includes(p.program_id))
-        .map((p) => p.description)
-        .join(", ");
-      toast.error(
-        `Could not delete ${names}${firstError ? `: ${firstError}` : ""}`,
-      );
-    }
-    setSelected(failed);
-    setDeleting(false);
-    fetchAll();
-  };
-
   const filtered = programs.filter((p) => {
+    if (pending.includes(p.program_id)) return false;
     if (!search) return true;
     return p.description.toLowerCase().includes(search.toLowerCase());
   });
@@ -381,12 +401,17 @@ export function ProgramsView() {
                   return (
                     <motion.tr
                       key={p.program_id}
+                      id={`program-${p.program_id}`}
                       initial={search ? false : { opacity: 0 }}
                       animate={{ opacity: 1 }}
                       exit={{ opacity: 0 }}
                       transition={{ duration: 0.15 }}
                       className={`border-b last:border-0 hover:bg-muted/40 ${
-                        selected.includes(p.program_id) ? "bg-primary/5" : ""
+                        highlightId === p.program_id
+                          ? "bg-yellow-100"
+                          : selected.includes(p.program_id)
+                            ? "bg-primary/5"
+                            : ""
                       }`}
                     >
                       <td className="px-4 py-3">
@@ -469,7 +494,7 @@ export function ProgramsView() {
         title="Delete this program?"
         description={`Are you sure you want to delete ${deleteTarget?.description}?`}
         onConfirm={() => {
-          if (deleteTarget) removeProgram(deleteTarget.program_id);
+          if (deleteTarget) deleteWithUndo([deleteTarget.program_id]);
           setDeleteTarget(null);
         }}
         onCancel={() => setDeleteTarget(null)}
@@ -481,11 +506,11 @@ export function ProgramsView() {
         description="Programs that still have sections can't be deleted and will stay selected."
         onConfirm={() => {
           setBulkDeleteOpen(false);
-          removeSelected();
+          deleteWithUndo(selected);
         }}
         onCancel={() => setBulkDeleteOpen(false)}
       />
-      {(loading || deleting) &&
+      {loading &&
         createPortal(
           <div
             role="status"
@@ -494,9 +519,7 @@ export function ProgramsView() {
           >
             <div className="flex items-center gap-3 rounded-lg bg-white px-5 py-3 shadow-md">
               <Loader2 className="h-5 w-5 animate-spin text-gray-700" />
-              <span className="text-sm text-gray-700">
-                {deleting ? "Deleting..." : "Loading..."}
-              </span>
+              <span className="text-sm text-gray-700">Loading...</span>
             </div>
           </div>,
           document.body,

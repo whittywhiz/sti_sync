@@ -186,12 +186,13 @@ app.post("/employees/import", upload.single("file"), async (req, res) => {
   );
 
   const existingResult = await pool.query(
-    "SELECT lname, fname, COALESCE(mname, '') AS mname FROM employee",
+    "SELECT employee_id, is_archived, lname, fname, COALESCE(mname, '') AS mname FROM employee",
   );
-  const existingKeys = new Set(
-    existingResult.rows.map((r: any) =>
+  const existing = new Map<string, { id: number; archived: boolean }>(
+    existingResult.rows.map((r: any) => [
       `${(r.lname ?? "").trim()}|${(r.fname ?? "").trim()}|${r.mname.trim()}`.toLowerCase(),
-    ),
+      { id: r.employee_id, archived: r.is_archived },
+    ]),
   );
   const skippedExisting: string[] = [];
 
@@ -212,7 +213,8 @@ app.post("/employees/import", upload.single("file"), async (req, res) => {
       const fullName = `${first.fname} ${first.lname}`
         .replace(/\s+/g, " ")
         .trim();
-      if (existingKeys.has(key)) {
+      const prev = existing.get(key);
+      if (prev && !prev.archived) {
         skippedExisting.push(fullName);
         continue;
       }
@@ -221,22 +223,40 @@ app.post("/employees/import", upload.single("file"), async (req, res) => {
       if (rawDept && dept === "Unassigned") {
         unmatchedDepts.push(`${fullName} (${rawDept})`);
       }
-      const result = await client.query(
-        `INSERT INTO employee (department, lname, mname, fname, position, username, max_hours_per_day, max_hours_per_week)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING employee_id`,
-        [
-          dept,
-
-          String(first.lname).trim(),
-          first.mname ? String(first.mname).trim() : null,
-          String(first.fname).trim(),
-          first.position ? String(first.position).trim() : null,
-          null,
-          first.max_hours_per_day ?? null,
-          first.max_hours_per_week ?? null,
-        ],
-      );
-      const empId = result.rows[0].employee_id;
+      let empId: number;
+      if (prev) {
+        await client.query(
+          `UPDATE employee SET department = $1, position = $2, max_hours_per_day = $3,
+             max_hours_per_week = $4, is_archived = false WHERE employee_id = $5`,
+          [
+            dept,
+            first.position ? String(first.position).trim() : null,
+            first.max_hours_per_day ?? null,
+            first.max_hours_per_week ?? null,
+            prev.id,
+          ],
+        );
+        await client.query("DELETE FROM availability WHERE employee_id = $1", [
+          prev.id,
+        ]);
+        empId = prev.id;
+      } else {
+        const result = await client.query(
+          `INSERT INTO employee (department, lname, mname, fname, position, username, max_hours_per_day, max_hours_per_week)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING employee_id`,
+          [
+            dept,
+            String(first.lname).trim(),
+            first.mname ? String(first.mname).trim() : null,
+            String(first.fname).trim(),
+            first.position ? String(first.position).trim() : null,
+            null,
+            first.max_hours_per_day ?? null,
+            first.max_hours_per_week ?? null,
+          ],
+        );
+        empId = result.rows[0].employee_id;
+      }
       inserted++;
 
       const slotsByDay = new Map<number, { start: number; end: number }[]>();
@@ -378,7 +398,7 @@ app.post("/courses/import", upload.single("file"), async (req, res) => {
   );
 
   const programResult = await pool.query(
-    "SELECT program_id, description FROM program",
+    "SELECT program_id, description FROM program WHERE is_archived = false",
   );
   const programMap = new Map<string, number>(
     programResult.rows.map((r: any) => [r.description, r.program_id]),
@@ -429,7 +449,12 @@ app.post("/courses/import", upload.single("file"), async (req, res) => {
       const courseTypeId = courseTypeMap.get(first.course_type);
       const c = await client.query(
         `INSERT INTO course (course_code, course_description, course_type_id)
-         VALUES ($1, $2, $3) ON CONFLICT (course_code) DO NOTHING`,
+                 VALUES ($1, $2, $3)
+         ON CONFLICT (course_code) DO UPDATE
+           SET course_description = EXCLUDED.course_description,
+               course_type_id = EXCLUDED.course_type_id,
+               is_archived = false
+           WHERE course.is_archived = true`,
         [code, first.course_description, courseTypeId],
       );
       inserted += c.rowCount ?? 0;
@@ -663,7 +688,7 @@ app.put("/change-password/confirm", async (req: Request, res: Response) => {
     });
   }
   if (String(code) !== pendingReset.code) {
-    return res.status(401).json({ success: false, error: "Incorrect code" });
+    return res.status(400).json({ success: false, error: "Incorrect code" });
   }
   try {
     const result = await pool.query("SELECT id FROM login LIMIT 1");
@@ -698,7 +723,9 @@ app.get("/test-db", async (req: Request, res: Response) => {
 
 app.get("/rooms", async (req: Request, res: Response) => {
   try {
-    const result = await pool.query("SELECT * FROM room ORDER BY room_number");
+    const result = await pool.query(
+      "SELECT * FROM room WHERE is_archived = false ORDER BY room_number",
+    );
     res.json(result.rows);
   } catch (err) {
     console.error(err);
@@ -709,7 +736,7 @@ app.get("/rooms", async (req: Request, res: Response) => {
 app.get("/programs", async (req: Request, res: Response) => {
   try {
     const result = await pool.query(
-      "SELECT * FROM program ORDER BY program_id",
+      "SELECT * FROM program WHERE is_archived = false ORDER BY program_id",
     );
     res.json(result.rows);
   } catch (err) {
@@ -745,7 +772,7 @@ app.get("/course-types", async (req: Request, res: Response) => {
 app.get("/employees", async (req: Request, res: Response) => {
   try {
     const result = await pool.query(
-      "SELECT * FROM employee ORDER BY employee_id",
+      "SELECT * FROM employee WHERE is_archived = false ORDER BY employee_id",
     );
     res.json(result.rows);
   } catch (err) {
@@ -759,7 +786,7 @@ app.get("/employees", async (req: Request, res: Response) => {
 app.get("/courses", async (req: Request, res: Response) => {
   try {
     const result = await pool.query(
-      "SELECT * FROM course ORDER BY course_code",
+      "SELECT * FROM course WHERE is_archived = false ORDER BY course_code",
     );
     res.json(result.rows);
   } catch (err) {
@@ -775,7 +802,7 @@ app.get("/courses/:code/employees", async (req: Request, res: Response) => {
       `SELECT e.employee_id, e.name, e.department
        FROM course_employee ce
        JOIN employee e ON e.employee_id = ce.employee_id
-       WHERE ce.course_code = $1`,
+     WHERE ce.course_code = $1 AND e.is_archived = false`,
       [code],
     );
     res.json(result.rows);
@@ -827,7 +854,7 @@ app.put("/courses/:code/employees", async (req: Request, res: Response) => {
 app.get("/sections", async (req: Request, res: Response) => {
   try {
     const result = await pool.query(
-      "SELECT * FROM section WHERE schedule_id = (SELECT schedule_id FROM schedule WHERE status = 'active' LIMIT 1) ORDER BY section_id",
+      "SELECT * FROM section WHERE schedule_id = (SELECT schedule_id FROM schedule WHERE status = 'active' LIMIT 1) AND program_id IN (SELECT program_id FROM program WHERE is_archived = false) ORDER BY section_id",
     );
     res.json(result.rows);
   } catch (err) {
@@ -876,7 +903,8 @@ async function autoAssignMinorProfessors(courseCode: string) {
     `INSERT INTO course_employee (course_code, employee_id)
      SELECT $1::varchar, e.employee_id
      FROM employee e
-            WHERE e.department = 'GE'
+           WHERE e.department = 'GE'
+       AND e.is_archived = false
        AND NOT EXISTS (
          SELECT 1 FROM course_employee WHERE course_code = $1::varchar
        )
@@ -1023,11 +1051,12 @@ app.get("/classes", async (req: Request, res: Response) => {
     res.status(500).json({ success: false, error: "Failed to fetch classes" });
   }
 });
-async function roomExists(roomNumber: any, excludeId?: string) {
+async function findRoom(roomNumber: any, excludeId?: string) {
   const r = await pool.query(
-    `SELECT 1 FROM room
+    `SELECT room_id, is_archived FROM room
      WHERE LOWER(REGEXP_REPLACE(room_number, '\\s', '', 'g')) = $1
        AND ($2::int IS NULL OR room_id <> $2::int)
+     ORDER BY is_archived
      LIMIT 1`,
     [
       String(roomNumber ?? "")
@@ -1036,22 +1065,28 @@ async function roomExists(roomNumber: any, excludeId?: string) {
       excludeId ?? null,
     ],
   );
-  return r.rows.length > 0;
+  return r.rows[0] as { room_id: number; is_archived: boolean } | undefined;
 }
 
 app.post("/rooms", async (req: Request, res: Response) => {
   const { room_number, capacity, type } = req.body;
   try {
-    if (await roomExists(room_number)) {
+    const found = await findRoom(room_number);
+    if (found && !found.is_archived) {
       return res.status(409).json({
         success: false,
         error: "A room with this number already exists.",
       });
     }
-    const result = await pool.query(
-      "INSERT INTO room (room_number, capacity, type) VALUES ($1, $2, $3) RETURNING *",
-      [room_number, capacity, type],
-    );
+    const result = found
+      ? await pool.query(
+          "UPDATE room SET room_number = $1, capacity = $2, type = $3, is_archived = false WHERE room_id = $4 RETURNING *",
+          [room_number, capacity, type, found.room_id],
+        )
+      : await pool.query(
+          "INSERT INTO room (room_number, capacity, type) VALUES ($1, $2, $3) RETURNING *",
+          [room_number, capacity, type],
+        );
     res.status(201).json(result.rows[0]);
   } catch (err) {
     console.error(err);
@@ -1063,10 +1098,27 @@ app.post("/programs", async (req: Request, res: Response) => {
   const description = (req.body.description ?? "").trim().replace(/\s+/g, " ");
   const code = (req.body.code ?? "").trim().toUpperCase();
   try {
-    const result = await pool.query(
-      "INSERT INTO program (description, code) VALUES ($1, $2) RETURNING *",
-      [description, code],
-    );
+    const found = (
+      await pool.query(
+        "SELECT program_id, is_archived FROM program WHERE description = $1 OR code = $2 ORDER BY is_archived LIMIT 1",
+        [description, code],
+      )
+    ).rows[0];
+    if (found && !found.is_archived) {
+      return res.status(409).json({
+        success: false,
+        error: "A program with this name or code already exists.",
+      });
+    }
+    const result = found
+      ? await pool.query(
+          "UPDATE program SET description = $1, code = $2, is_archived = false WHERE program_id = $3 RETURNING *",
+          [description, code, found.program_id],
+        )
+      : await pool.query(
+          "INSERT INTO program (description, code) VALUES ($1, $2) RETURNING *",
+          [description, code],
+        );
     res.status(201).json(result.rows[0]);
   } catch (err: any) {
     if (err.code === "23505") {
@@ -1121,10 +1173,23 @@ async function employeeExists(
        AND LOWER(TRIM(fname)) = LOWER(TRIM($2))
        AND LOWER(TRIM(COALESCE(mname, ''))) = LOWER(TRIM($3))
        AND ($4::int IS NULL OR employee_id <> $4::int)
+       AND is_archived = false
      LIMIT 1`,
     [lname ?? "", fname ?? "", mname ?? "", excludeId ?? null],
   );
   return r.rows.length > 0;
+}
+async function findEmployee(lname: any, fname: any, mname: any) {
+  const r = await pool.query(
+    `SELECT employee_id, is_archived FROM employee
+     WHERE LOWER(TRIM(lname)) = LOWER(TRIM($1))
+       AND LOWER(TRIM(fname)) = LOWER(TRIM($2))
+       AND LOWER(TRIM(COALESCE(mname, ''))) = LOWER(TRIM($3))
+     ORDER BY is_archived
+     LIMIT 1`,
+    [lname ?? "", fname ?? "", mname ?? ""],
+  );
+  return r.rows[0] as { employee_id: number; is_archived: boolean } | undefined;
 }
 async function departmentExists(name: any) {
   const r = await pool.query(
@@ -1151,27 +1216,38 @@ app.post("/employees", async (req: Request, res: Response) => {
         .status(400)
         .json({ success: false, error: "Invalid department" });
     }
-    if (await employeeExists(lname, fname, mname)) {
+    const found = await findEmployee(lname, fname, mname);
+    if (found && !found.is_archived) {
       return res.status(409).json({
         success: false,
         error: "A professor with this name already exists.",
       });
     }
-    const result = await pool.query(
-      `INSERT INTO employee
-        (department, lname, mname, fname, position, username, max_hours_per_day, max_hours_per_week)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-      [
-        department,
-        lname,
-        mname,
-        fname,
-        position,
-        username || null,
-        max_hours_per_day ?? null,
-        max_hours_per_week ?? null,
-      ],
-    );
+    const vals = [
+      department,
+      lname,
+      mname,
+      fname,
+      position,
+      username || null,
+      max_hours_per_day ?? null,
+      max_hours_per_week ?? null,
+    ];
+    const result = found
+      ? await pool.query(
+          `UPDATE employee
+           SET department = $1, lname = $2, mname = $3, fname = $4, position = $5,
+               username = $6, max_hours_per_day = $7, max_hours_per_week = $8,
+               is_archived = false
+           WHERE employee_id = $9 RETURNING *`,
+          [...vals, found.employee_id],
+        )
+      : await pool.query(
+          `INSERT INTO employee
+            (department, lname, mname, fname, position, username, max_hours_per_day, max_hours_per_week)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+          vals,
+        );
     res.status(201).json(result.rows[0]);
   } catch (err) {
     console.error(err);
@@ -1240,17 +1316,24 @@ app.post("/courses", async (req: Request, res: Response) => {
   const { course_description, course_type_id } = req.body;
   try {
     const result = await pool.query(
-      "INSERT INTO course (course_code, course_description, course_type_id) VALUES ($1, $2, $3) RETURNING *",
+      `INSERT INTO course (course_code, course_description, course_type_id)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (course_code) DO UPDATE
+         SET course_description = EXCLUDED.course_description,
+             course_type_id = EXCLUDED.course_type_id,
+             is_archived = false
+         WHERE course.is_archived = true
+       RETURNING *`,
       [course_code, course_description, course_type_id],
     );
-    res.status(201).json(result.rows[0]);
-  } catch (err: any) {
-    if (err.code === "23505") {
+    if (result.rows.length === 0) {
       return res.status(409).json({
         success: false,
         error: "A course with this code already exists.",
       });
     }
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, error: "Failed to create course" });
   }
@@ -1365,7 +1448,8 @@ app.put("/rooms/:id", async (req: Request, res: Response) => {
   const { id } = req.params;
   const { room_number, capacity, type } = req.body;
   try {
-    if (await roomExists(room_number, String(id))) {
+    const dupRoom = await findRoom(room_number, String(id));
+    if (dupRoom && !dupRoom.is_archived) {
       return res.status(409).json({
         success: false,
         error: "Another room with this number already exists.",
@@ -1693,7 +1777,8 @@ async function eligibleFor(
                    AND k.schedule_id = $4 AND k.day_id = $1
                    AND k.class_id <> $5), 0)::float AS load_hours
      FROM employee e
-     WHERE EXISTS (SELECT 1 FROM availability a
+     WHERE e.is_archived = false
+       AND EXISTS (SELECT 1 FROM availability a
                    WHERE a.employee_id = e.employee_id AND a.day_id = $1
                      AND a.start_time <= $2 AND a.end_time >= $3)
        AND NOT EXISTS (SELECT 1 FROM class k
@@ -1775,45 +1860,52 @@ app.delete("/rooms/:id", async (req: Request, res: Response) => {
   const { id } = req.params;
   try {
     const result = await pool.query(
-      "DELETE FROM room WHERE room_id = $1 RETURNING *",
+      "UPDATE room SET is_archived = true WHERE room_id = $1 AND is_archived = false RETURNING *",
       [id],
     );
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, error: "Room not found" });
     }
     res.json({ success: true, deleted: result.rows[0] });
-  } catch (err) {
+  } catch (err: any) {
+    if (err.code === "23503" || err.code === "23001") {
+      return res.status(409).json({
+        success: false,
+        error: "Can't delete: this room is used by scheduled classes.",
+      });
+    }
     console.error(err);
     res.status(500).json({ success: false, error: "Failed to delete room" });
   }
 });
 
 app.delete("/programs/:id", async (req, res) => {
-  const client = await pool.connect();
   try {
-    await client.query("BEGIN");
-    await client.query("DELETE FROM curriculum WHERE program_id = $1", [
-      req.params.id,
-    ]);
-    await client.query("DELETE FROM program WHERE program_id = $1", [
-      req.params.id,
-    ]);
-    await client.query("COMMIT");
-    res.json({ success: true });
-  } catch (err: any) {
-    await client.query("ROLLBACK").catch(() => {});
-    if (err.code === "23503" || err.code === "23001") {
+    const used = await pool.query(
+      `SELECT 1 FROM section
+       WHERE program_id = $1
+         AND schedule_id = (SELECT schedule_id FROM schedule WHERE status = 'active' LIMIT 1)
+       LIMIT 1`,
+      [req.params.id],
+    );
+    if (used.rows.length > 0) {
       return res.status(409).json({
         error:
           "Can't delete: this program is used by sections. Delete its sections first.",
       });
     }
+    const result = await pool.query(
+      "UPDATE program SET is_archived = true WHERE program_id = $1 AND is_archived = false RETURNING *",
+      [req.params.id],
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Program not found" });
+    }
+    res.json({ success: true });
+  } catch (err: any) {
     res.status(500).json({ error: err.message });
-  } finally {
-    client.release();
   }
 });
-
 app.delete("/course-types/:id", async (req: Request, res: Response) => {
   const { id } = req.params;
   try {
@@ -1839,7 +1931,7 @@ app.delete("/employees/:id", async (req: Request, res: Response) => {
   const { id } = req.params;
   try {
     const result = await pool.query(
-      "DELETE FROM employee WHERE employee_id = $1 RETURNING *",
+      "UPDATE employee SET is_archived = true WHERE employee_id = $1 AND is_archived = false RETURNING *",
       [id],
     );
     if (result.rows.length === 0) {
@@ -1860,39 +1952,20 @@ app.delete("/employees/:id", async (req: Request, res: Response) => {
 });
 
 app.delete("/courses/:code", async (req: Request, res: Response) => {
-  const { code } = req.params;
-  const client = await pool.connect();
   try {
-    await client.query("BEGIN");
-    await client.query("DELETE FROM curriculum WHERE course_code = $1", [code]);
-    await client.query("DELETE FROM course_employee WHERE course_code = $1", [
-      code,
-    ]);
-    const result = await client.query(
-      "DELETE FROM course WHERE course_code = $1 RETURNING *",
-      [code],
+    const result = await pool.query(
+      "UPDATE course SET is_archived = true WHERE course_code = $1 AND is_archived = false RETURNING *",
+      [req.params.code],
     );
     if (result.rows.length === 0) {
-      await client.query("ROLLBACK");
       return res
         .status(404)
         .json({ success: false, error: "Course not found" });
     }
-    await client.query("COMMIT");
     res.json({ success: true, deleted: result.rows[0] });
-  } catch (err: any) {
-    await client.query("ROLLBACK").catch(() => {});
+  } catch (err) {
     console.error(err);
-    if (err.code === "23503" || err.code === "23001") {
-      return res.status(409).json({
-        success: false,
-        error:
-          "This course is used by scheduled classes. Regenerate or remove them first.",
-      });
-    }
     res.status(500).json({ success: false, error: "Failed to delete course" });
-  } finally {
-    client.release();
   }
 });
 
@@ -2178,9 +2251,9 @@ app.get("/summary", async (_req, res) => {
   try {
     const r = await pool.query(`
       SELECT
-        (SELECT COUNT(*) FROM room)::int AS rooms,
-        (SELECT COUNT(*) FROM employee)::int AS employees,
-        (SELECT COUNT(*) FROM course)::int AS courses,
+        (SELECT COUNT(*) FROM room WHERE is_archived = false)::int AS rooms,
+        (SELECT COUNT(*) FROM employee WHERE is_archived = false)::int AS employees,
+        (SELECT COUNT(*) FROM course WHERE is_archived = false)::int AS courses,
         (SELECT COUNT(*) FROM section
            WHERE schedule_id = (SELECT schedule_id FROM schedule WHERE status = 'active' LIMIT 1))::int AS sections
     `);

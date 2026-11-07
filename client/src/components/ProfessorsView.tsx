@@ -12,7 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useAnimationControls } from "framer-motion";
 import { ImportExcelButton } from "@/components/ImportExcelButton";
 import { ConfirmDeleteDialog } from "@/components/ConfirmDeleteDialog";
 import { Modal } from "@/components/Modal";
@@ -127,6 +127,13 @@ function ProfessorForm({
   const [selEnd, setSelEnd] = useState(17);
   const [slotError, setSlotError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const shake = useAnimationControls();
+  const fail = (msg: string) => {
+    if (saveError === msg) {
+      shake.start({ x: [0, -6, 6, -4, 4, 0], transition: { duration: 0.4 } });
+    }
+    setSaveError(msg);
+  };
   const [departments, setDepartments] = useState<string[]>([]);
 
   useEffect(() => {
@@ -176,7 +183,11 @@ function ProfessorForm({
 
   const handleSave = () => {
     if (!fname.trim() || !lname.trim() || !department.trim()) {
-      setSaveError("First Name, Last Name, and Department are required.");
+      fail("First Name, Last Name, and Department are required.");
+      return;
+    }
+    if (slots.length === 0) {
+      fail("Add at least one availability slot.");
       return;
     }
 
@@ -184,15 +195,15 @@ function ProfessorForm({
     const weekVal = maxHoursPerWeek === "" ? null : Number(maxHoursPerWeek);
 
     if (dayVal != null && (isNaN(dayVal) || dayVal < 0 || dayVal > 24)) {
-      setSaveError("Max hours/day must be between 0 and 24.");
+      fail("Max hours/day must be between 0 and 24.");
       return;
     }
     if (weekVal != null && (isNaN(weekVal) || weekVal < 0 || weekVal > 168)) {
-      setSaveError("Max hours/week must be between 0 and 168.");
+      fail("Max hours/week must be between 0 and 168.");
       return;
     }
     if (dayVal != null && weekVal != null && dayVal > weekVal) {
-      setSaveError("Max hours/day can't be greater than max hours/week.");
+      fail("Max hours/day can't be greater than max hours/week.");
       return;
     }
 
@@ -297,7 +308,9 @@ function ProfessorForm({
         </div>
       </div>
       <div>
-        <p className="text-sm font-medium mb-2">Availability</p>
+        <p className="text-sm font-medium mb-2">
+          Availability <span className="text-destructive">*</span>
+        </p>
         <div className="flex gap-2 items-end flex-wrap">
           <Select
             value={String(selDayId)}
@@ -390,7 +403,9 @@ function ProfessorForm({
             ))}
         </div>
       </div>
-      {saveError && <p className="text-xs text-destructive">{saveError}</p>}
+      <motion.p animate={shake} className="text-xs text-destructive">
+        {saveError}
+      </motion.p>
       <div className="flex gap-2">
         <Button size="sm" onClick={handleSave}>
           <Check className="w-4 h-4 mr-1" /> Save
@@ -421,6 +436,20 @@ export function ProfessorsView() {
   const [deptFilter, setDeptFilter] = useState("");
   const [deptOptions, setDeptOptions] = useState<string[]>([]);
   const savingRef = useRef(false);
+  const [pending, setPending] = useState<number[]>([]);
+  const [highlightId, setHighlightId] = useState<number | null>(null);
+  const queue = useRef(new Map<ReturnType<typeof setTimeout>, number[]>());
+
+  useEffect(() => {
+    const flush = () =>
+      queue.current.forEach((ids) =>
+        ids.forEach((id) =>
+          fetch(`/api/employees/${id}`, { method: "DELETE", keepalive: true }),
+        ),
+      );
+    window.addEventListener("beforeunload", flush);
+    return () => window.removeEventListener("beforeunload", flush);
+  }, []);
   const emptyForm: ProfessorFormValues = {
     fname: "",
     mname: "",
@@ -523,9 +552,14 @@ export function ProfessorsView() {
         return;
       }
       await saveAvailabilityForEmployee(data.employee_id, values.slots);
-      toast.success("Instructor added successfully");
       setShowForm(false);
-      fetchAll();
+      await fetchAll();
+      toast.success("Instructor added successfully", {
+        action: {
+          label: "View",
+          onClick: () => goToProfessor(data.employee_id),
+        },
+      });
     } catch (err) {
       console.error("Failed to create Instructor", err);
       toast.error(
@@ -593,65 +627,67 @@ export function ProfessorsView() {
   const cancelEdit = () => {
     setEditingId(null);
   };
+  const deleteWithUndo = (ids: number[]) => {
+    setPending((p) => [...p, ...ids]);
+    setSelected((s) => s.filter((x) => !ids.includes(x)));
 
-  const removeProfessor = async (id: number) => {
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/employees/${id}`, { method: "DELETE" });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        toast.error(data.error || "Failed to delete Instructor");
-        setLoading(false);
-        return;
+    const unhide = () => setPending((p) => p.filter((x) => !ids.includes(x)));
+
+    const timer = setTimeout(async () => {
+      queue.current.delete(timer);
+      const failed: number[] = [];
+      let firstError = "";
+      for (const id of ids) {
+        try {
+          const res = await fetch(`/api/employees/${id}`, {
+            method: "DELETE",
+          });
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            failed.push(id);
+            if (!firstError) firstError = data.error ?? "";
+          }
+        } catch {
+          failed.push(id);
+        }
       }
-      toast.success("Instructor deleted");
-      setSelected((s) => s.filter((x) => x !== id));
-      fetchAll();
-    } catch (err) {
-      console.error("Failed to delete Instructor", err);
-      toast.error("Failed to delete Instructor");
-      setLoading(false);
-    }
+      if (failed.length > 0) {
+        toast.error(firstError || "Failed to delete Instructor");
+      }
+      await fetchAll();
+      unhide();
+    }, 5000);
+    queue.current.set(timer, ids);
+
+    toast(`Deleted ${ids.length} instructor${ids.length !== 1 ? "s" : ""}`, {
+      duration: 5000,
+      action: {
+        label: "Undo",
+        onClick: () => {
+          clearTimeout(timer);
+          queue.current.delete(timer);
+          unhide();
+        },
+      },
+    });
+  };
+
+  const goToProfessor = (id: number) => {
+    setSearch("");
+    setDeptFilter("");
+    setTimeout(() => {
+      document
+        .getElementById(`prof-${id}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      setHighlightId(id);
+      setTimeout(() => setHighlightId(null), 2500);
+    }, 100);
   };
 
   const toggleSelect = (id: number) =>
     setSelected((s) =>
       s.includes(id) ? s.filter((x) => x !== id) : [...s, id],
     );
-
-  const removeSelected = async () => {
-    const ids = [...selected];
-    setLoading(true);
-    const failed: number[] = [];
-    let firstError = "";
-    for (const id of ids) {
-      try {
-        const res = await fetch(`/api/employees/${id}`, { method: "DELETE" });
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          failed.push(id);
-          if (!firstError) firstError = data.error ?? "";
-        }
-      } catch {
-        failed.push(id);
-      }
-    }
-    const deleted = ids.length - failed.length;
-    if (deleted > 0) {
-      toast.success(`Deleted ${deleted} instructor${deleted !== 1 ? "s" : ""}`);
-    }
-    if (failed.length > 0) {
-      const names = employees
-        .filter((e) => failed.includes(e.employee_id))
-        .map((e) => e.name)
-        .join(", ");
-      toast.error(
-        `Could not delete ${names}${firstError ? `: ${firstError}` : ""}`,
-      );
-    }
-    setSelected(failed);
-    fetchAll();
-  };
 
   const slotsForEmployee = (employeeId: number): SlotDraft[] =>
     availability
@@ -673,6 +709,7 @@ export function ProfessorsView() {
   }, [hasUnassigned, deptFilter]);
 
   const filtered = employees.filter((p) => {
+    if (pending.includes(p.employee_id)) return false;
     if (deptFilter === "__none__") {
       if (!isUnassigned(p.department)) return false;
     } else if (deptFilter && p.department !== deptFilter) return false;
@@ -803,12 +840,17 @@ export function ProfessorsView() {
                 {sorted.map((p) => (
                   <motion.tr
                     key={p.employee_id}
+                    id={`prof-${p.employee_id}`}
                     initial={search ? false : { opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
                     transition={{ duration: 0.15 }}
                     className={`border-b last:border-0 hover:bg-muted/40 ${
-                      selected.includes(p.employee_id) ? "bg-primary/5" : ""
+                      highlightId === p.employee_id
+                        ? "bg-yellow-100"
+                        : selected.includes(p.employee_id)
+                          ? "bg-primary/5"
+                          : ""
                     }`}
                   >
                     <td className="px-4 py-3 align-top">
@@ -937,7 +979,7 @@ export function ProfessorsView() {
         title="Delete this Instructor?"
         description={`Are you sure you want to delete ${deleteTarget?.name}?`}
         onConfirm={() => {
-          if (deleteTarget) removeProfessor(deleteTarget.employee_id);
+          if (deleteTarget) deleteWithUndo([deleteTarget.employee_id]);
           setDeleteTarget(null);
         }}
         onCancel={() => setDeleteTarget(null)}
@@ -948,7 +990,7 @@ export function ProfessorsView() {
         description="Instructor who are scheduled in classes or assigned to courses can't be deleted and will stay selected."
         onConfirm={() => {
           setBulkDeleteOpen(false);
-          removeSelected();
+          deleteWithUndo(selected);
         }}
         onCancel={() => setBulkDeleteOpen(false)}
       />

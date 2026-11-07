@@ -222,7 +222,20 @@ export function SectionsView() {
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [activeSemester, setActiveSemester] = useState<string>("");
   const [loading, setLoading] = useState(true);
-  const [deleting, setDeleting] = useState(false);
+  const [pending, setPending] = useState<number[]>([]);
+  const [highlightId, setHighlightId] = useState<number | null>(null);
+  const queue = useRef(new Map<ReturnType<typeof setTimeout>, number[]>());
+
+  useEffect(() => {
+    const flush = () =>
+      queue.current.forEach((ids) =>
+        ids.forEach((id) =>
+          fetch(`/api/sections/${id}`, { method: "DELETE", keepalive: true }),
+        ),
+      );
+    window.addEventListener("beforeunload", flush);
+    return () => window.removeEventListener("beforeunload", flush);
+  }, []);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -333,9 +346,15 @@ export function SectionsView() {
         return;
       }
 
-      toast.success("Section added successfully");
+      const created = await res.json().catch(() => null);
+      const newId: number | undefined = created?.section_id;
       setShowForm(false);
-      fetchAll();
+      await fetchAll();
+      toast.success("Section added successfully", {
+        action: newId
+          ? { label: "View", onClick: () => goToSection(newId) }
+          : undefined,
+      });
     } catch (err) {
       console.error("Failed to create section", err);
       setError("Error creating section");
@@ -369,62 +388,64 @@ export function SectionsView() {
     }
   };
 
-  const removeSection = async (id: number) => {
-    setDeleting(true);
-    try {
-      const res = await fetch(`/api/sections/${id}`, { method: "DELETE" });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        toast.error(data.error || "Failed to delete section");
-        return;
-      }
-      toast.success("Section deleted");
-      setSelected((s) => s.filter((x) => x !== id));
-      await fetchAll();
-    } catch (err) {
-      console.error("Failed to delete section", err);
-      toast.error("Failed to delete section");
-    } finally {
-      setDeleting(false);
-    }
-  };
-
   const toggleSelect = (id: number) =>
     setSelected((s) =>
       s.includes(id) ? s.filter((x) => x !== id) : [...s, id],
     );
+  const deleteWithUndo = (ids: number[]) => {
+    setPending((p) => [...p, ...ids]);
+    setSelected((s) => s.filter((x) => !ids.includes(x)));
 
-  const removeSelected = async () => {
-    const ids = [...selected];
-    const failed: number[] = [];
-    setDeleting(true);
-    let firstError = "";
-    for (const id of ids) {
-      try {
-        const res = await fetch(`/api/sections/${id}`, { method: "DELETE" });
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
+    const unhide = () => setPending((p) => p.filter((x) => !ids.includes(x)));
+
+    const timer = setTimeout(async () => {
+      queue.current.delete(timer);
+      const failed: number[] = [];
+      let firstError = "";
+      for (const id of ids) {
+        try {
+          const res = await fetch(`/api/sections/${id}`, { method: "DELETE" });
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            failed.push(id);
+            if (!firstError) firstError = data.error ?? "";
+          }
+        } catch {
           failed.push(id);
-          if (!firstError) firstError = data.error ?? "";
         }
-      } catch {
-        failed.push(id);
       }
-    }
-    const deleted = ids.length - failed.length;
-    if (deleted > 0) {
-      toast.success(`Deleted ${deleted} section${deleted !== 1 ? "s" : ""}`);
-    }
-    if (failed.length > 0) {
-      toast.error(
-        `Could not delete ${failed.length} section${failed.length !== 1 ? "s" : ""}${firstError ? `: ${firstError}` : ""}`,
-      );
-    }
-    setSelected(failed);
-    await fetchAll();
-    setDeleting(false);
+      if (failed.length > 0) {
+        toast.error(firstError || "Failed to delete section");
+      }
+      await fetchAll();
+      unhide();
+    }, 5000);
+    queue.current.set(timer, ids);
+
+    toast(`Deleted ${ids.length} section${ids.length !== 1 ? "s" : ""}`, {
+      duration: 5000,
+      action: {
+        label: "Undo",
+        onClick: () => {
+          clearTimeout(timer);
+          queue.current.delete(timer);
+          unhide();
+        },
+      },
+    });
   };
 
+  const goToSection = (id: number) => {
+    setSearch("");
+    setProgramFilter("");
+    setTimeout(() => {
+      document
+        .getElementById(`section-${id}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      setHighlightId(id);
+      setTimeout(() => setHighlightId(null), 2500);
+    }, 100);
+  };
   const handleActivateSemester = async (schedule: Schedule) => {
     const previous = activeSemester;
     setActiveSemester(`${schedule.term} ${schedule.year}`);
@@ -567,11 +588,12 @@ export function SectionsView() {
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
     return sections.filter((s) => {
+      if (pending.includes(s.section_id)) return false;
       if (programFilter && String(s.program_id) !== programFilter) return false;
       if (!search) return true;
       return sectionDisplayName(s).toLowerCase().includes(q);
     });
-  }, [sections, search, programFilter, sectionDisplayName]);
+  }, [sections, pending, search, programFilter, sectionDisplayName]);
 
   const sorted = useMemo(
     () =>
@@ -790,12 +812,17 @@ export function SectionsView() {
                   return (
                     <motion.tr
                       key={s.section_id}
+                      id={`section-${s.section_id}`}
                       initial={search ? false : { opacity: 0 }}
                       animate={{ opacity: 1 }}
                       exit={{ opacity: 0 }}
                       transition={{ duration: 0.15 }}
                       className={`border-b last:border-0 hover:bg-muted/40 ${
-                        selected.includes(s.section_id) ? "bg-primary/5" : ""
+                        highlightId === s.section_id
+                          ? "bg-yellow-100"
+                          : selected.includes(s.section_id)
+                            ? "bg-primary/5"
+                            : ""
                       }`}
                     >
                       <td className="px-4 py-3">
@@ -1052,7 +1079,7 @@ export function SectionsView() {
         title="Delete this Section?"
         description={`Are you sure you want to delete ${deleteTarget ? sectionDisplayName(deleteTarget) : ""}? Its scheduled classes will be deleted too.`}
         onConfirm={() => {
-          if (deleteTarget) removeSection(deleteTarget.section_id);
+          if (deleteTarget) deleteWithUndo([deleteTarget.section_id]);
           setDeleteTarget(null);
         }}
         onCancel={() => setDeleteTarget(null)}
@@ -1063,11 +1090,11 @@ export function SectionsView() {
         description="Their scheduled classes will be deleted too."
         onConfirm={() => {
           setBulkDeleteOpen(false);
-          removeSelected();
+          deleteWithUndo(selected);
         }}
         onCancel={() => setBulkDeleteOpen(false)}
       />
-      {(loading || deleting) &&
+      {loading &&
         createPortal(
           <div
             role="status"
@@ -1076,9 +1103,7 @@ export function SectionsView() {
           >
             <div className="flex items-center gap-3 rounded-lg bg-white px-5 py-3 shadow-md">
               <Loader2 className="h-5 w-5 animate-spin text-gray-700" />
-              <span className="text-sm text-gray-700">
-                {deleting ? "Deleting..." : "Loading..."}
-              </span>
+              <span className="text-sm text-gray-700">Loading...</span>
             </div>
           </div>,
           document.body,

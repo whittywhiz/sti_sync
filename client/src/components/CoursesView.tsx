@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import {
   Plus,
   Trash2,
@@ -463,7 +463,20 @@ export function CoursesView() {
   const [curriculums, setCurriculums] = useState<Curriculum[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
-  const [deleting, setDeleting] = useState(false);
+  const [pending, setPending] = useState<string[]>([]);
+  const [highlightCode, setHighlightCode] = useState<string | null>(null);
+  const queue = useRef(new Map<ReturnType<typeof setTimeout>, string[]>());
+
+  useEffect(() => {
+    const flush = () =>
+      queue.current.forEach((codes) =>
+        codes.forEach((code) =>
+          fetch(`/api/courses/${code}`, { method: "DELETE", keepalive: true }),
+        ),
+      );
+    window.addEventListener("beforeunload", flush);
+    return () => window.removeEventListener("beforeunload", flush);
+  }, []);
 
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -607,9 +620,11 @@ export function CoursesView() {
       }
       await saveCourseEmployees(code, v.employee_ids);
       await saveCurriculumForCourse(code, v.placements);
-      toast.success("Course added successfully");
       setShowForm(false);
-      fetchAll();
+      await fetchAll();
+      toast.success("Course added successfully", {
+        action: { label: "View", onClick: () => goToCourse(code) },
+      });
     } catch (err) {
       console.error("Failed to create course", err);
       toast.error(err instanceof Error ? err.message : "Could not save.");
@@ -662,26 +677,62 @@ export function CoursesView() {
     setEditingId(code);
   };
 
-  const removeCourse = async (code: string) => {
-    setDeleting(true);
-    try {
-      const res = await fetch(`/api/courses/${code}`, { method: "DELETE" });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        toast.error(data.error ?? "Failed to delete course");
-        return;
+  const deleteWithUndo = (codes: string[]) => {
+    setPending((p) => [...p, ...codes]);
+    setSelected((s) => s.filter((k) => !codes.includes(codeOf(k))));
+
+    const unhide = () => setPending((p) => p.filter((x) => !codes.includes(x)));
+
+    const timer = setTimeout(async () => {
+      queue.current.delete(timer);
+      const failed: string[] = [];
+      let firstError = "";
+      for (const code of codes) {
+        try {
+          const res = await fetch(`/api/courses/${code}`, { method: "DELETE" });
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            failed.push(code);
+            if (!firstError) firstError = data.error ?? "";
+          }
+        } catch {
+          failed.push(code);
+        }
       }
-      toast.success("Course deleted");
-      setSelected((s) => s.filter((k) => codeOf(k) !== code));
+      if (failed.length > 0) {
+        toast.error(firstError || "Failed to delete course");
+      }
       await fetchAll();
-    } catch (err) {
-      console.error("Failed to delete course", err);
-      toast.error("Failed to delete course");
-    } finally {
-      setDeleting(false);
-    }
+      unhide();
+    }, 5000);
+    queue.current.set(timer, codes);
+
+    toast(`Deleted ${codes.length} course${codes.length !== 1 ? "s" : ""}`, {
+      duration: 5000,
+      action: {
+        label: "Undo",
+        onClick: () => {
+          clearTimeout(timer);
+          queue.current.delete(timer);
+          unhide();
+        },
+      },
+    });
   };
 
+  const goToCourse = (code: string) => {
+    setSearch("");
+    setFilterProgram("all");
+    setFilterType("all");
+    setFilterTerm("all");
+    setTimeout(() => {
+      document
+        .querySelector(`[data-course="${code}"]`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      setHighlightCode(code);
+      setTimeout(() => setHighlightCode(null), 2500);
+    }, 100);
+  };
   const toggleSelect = (key: string) =>
     setSelected((s) =>
       s.includes(key) ? s.filter((x) => x !== key) : [...s, key],
@@ -696,37 +747,6 @@ export function CoursesView() {
         ? s.filter((x) => !keys.includes(x))
         : Array.from(new Set([...s, ...keys])),
     );
-  };
-
-  const removeSelected = async () => {
-    setDeleting(true);
-    const codes = [...selectedCodes];
-    const failed: string[] = [];
-    let firstError = "";
-    for (const code of codes) {
-      try {
-        const res = await fetch(`/api/courses/${code}`, { method: "DELETE" });
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          failed.push(code);
-          if (!firstError) firstError = data.error ?? "";
-        }
-      } catch {
-        failed.push(code);
-      }
-    }
-    const deleted = codes.length - failed.length;
-    if (deleted > 0) {
-      toast.success(`Deleted ${deleted} course${deleted !== 1 ? "s" : ""}`);
-    }
-    if (failed.length > 0) {
-      toast.error(
-        `Could not delete ${failed.join(", ")}${firstError ? `: ${firstError}` : ""}`,
-      );
-    }
-    setSelected((s) => s.filter((k) => failed.includes(codeOf(k))));
-    await fetchAll();
-    setDeleting(false);
   };
 
   const placementsByCourse = useMemo(() => {
@@ -754,6 +774,11 @@ export function CoursesView() {
       ),
     [programs],
   );
+  const visibleCourses = useMemo(
+    () => courses.filter((c) => !pending.includes(c.course_code)),
+    [courses, pending],
+  );
+
   const filtered = useMemo(() => {
     const matchingCuls = curriculums.filter(
       (cu) =>
@@ -761,8 +786,7 @@ export function CoursesView() {
         matchesType(cu),
     );
     const matchedCodes = new Set(matchingCuls.map((cu) => cu.course_code));
-
-    return courses
+    return visibleCourses
       .filter((c) => matchedCodes.has(c.course_code))
       .filter((c) => {
         if (!search) return true;
@@ -773,14 +797,21 @@ export function CoursesView() {
         );
       })
       .sort((a, b) => a.course_code.localeCompare(b.course_code));
-  }, [courses, curriculums, filterProgram, filterType, filterTerm, search]);
+  }, [
+    visibleCourses,
+    curriculums,
+    filterProgram,
+    filterType,
+    filterTerm,
+    search,
+  ]);
 
   const unplaced = useMemo(() => {
     if (filterProgram !== "all" || filterType !== "all" || filterTerm !== "all")
       return [];
     const placed = new Set(curriculums.map((cu) => cu.course_code));
     const q = search.toLowerCase();
-    return courses
+    return visibleCourses
       .filter((c) => !placed.has(c.course_code))
       .filter(
         (c) =>
@@ -789,7 +820,14 @@ export function CoursesView() {
           c.course_description.toLowerCase().includes(q),
       )
       .sort((a, b) => a.course_code.localeCompare(b.course_code));
-  }, [courses, curriculums, filterProgram, filterType, filterTerm, search]);
+  }, [
+    visibleCourses,
+    curriculums,
+    filterProgram,
+    filterType,
+    filterTerm,
+    search,
+  ]);
   //
 
   const grouped = useMemo(() => {
@@ -939,8 +977,13 @@ export function CoursesView() {
               return (
                 <tr
                   key={`${progId}-${c.course_code}`}
+                  data-course={c.course_code}
                   className={`border-b last:border-0 hover:bg-muted/40 ${
-                    isSelected ? "bg-primary/5" : ""
+                    highlightCode === c.course_code
+                      ? "bg-yellow-100"
+                      : isSelected
+                        ? "bg-primary/5"
+                        : ""
                   }`}
                 >
                   <td className="px-4 py-3 align-middle">
@@ -978,7 +1021,7 @@ export function CoursesView() {
                             <span className="text-xs px-2 py-0.5 rounded-full bg-secondary whitespace-nowrap">
                               {cu.year_level}
                               {cu.term
-                                ? ` · ${cu.term.replace(" Semester", " Sem")}`
+                                ? ` − ${cu.term.replace(" Semester", " Sem")}`
                                 : ""}
                             </span>
                           </span>
@@ -1206,7 +1249,7 @@ export function CoursesView() {
         title="Delete this course?"
         description={`Courses are shared across programs, so deleting ${deleteTarget} removes it from every program it's placed in.`}
         onConfirm={() => {
-          if (deleteTarget) removeCourse(deleteTarget);
+          if (deleteTarget) deleteWithUndo([deleteTarget]);
           setDeleteTarget(null);
         }}
         onCancel={() => setDeleteTarget(null)}
@@ -1218,11 +1261,11 @@ export function CoursesView() {
         description="Courses are shared across programs, so deleting a course removes it from every program it's placed in. Courses used by scheduled classes can't be deleted and will stay selected."
         onConfirm={() => {
           setBulkDeleteOpen(false);
-          removeSelected();
+          deleteWithUndo(selectedCodes);
         }}
         onCancel={() => setBulkDeleteOpen(false)}
       />
-      {(loading || deleting) &&
+      {loading &&
         createPortal(
           <div
             role="status"
@@ -1231,9 +1274,7 @@ export function CoursesView() {
           >
             <div className="flex items-center gap-3 rounded-lg bg-white px-5 py-3 shadow-md">
               <Loader2 className="h-5 w-5 animate-spin text-gray-700" />
-              <span className="text-sm text-gray-700">
-                {deleting ? "Deleting..." : "Loading..."}
-              </span>
+              <span className="text-sm text-gray-700">Loading...</span>
             </div>
           </div>,
           document.body,

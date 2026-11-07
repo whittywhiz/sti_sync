@@ -26,7 +26,11 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
 
   if (method !== "GET") {
     const res = await realFetch(input, authInit);
-    if (res.status === 401 && !url.includes("/login")) {
+    if (
+      res.status === 401 &&
+      !url.includes("/login") &&
+      !url.includes("/change-password")
+    ) {
       localStorage.removeItem("authToken");
       window.location.href = "/login";
     }
@@ -34,7 +38,8 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     return res;
   }
 
-  if (url.includes("/generate-schedule/status")) return realFetch(input, authInit);
+  if (url.includes("/generate-schedule/status"))
+    return realFetch(input, authInit);
 
   const hit = cache.get(url);
   if (hit && Date.now() - hit.time < TTL) {
@@ -45,7 +50,11 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   }
 
   const res = await realFetch(input, authInit);
-  if (res.status === 401 && !url.includes("/login")) {
+  if (
+    res.status === 401 &&
+    !url.includes("/login") &&
+    !url.includes("/change-password")
+  ) {
     localStorage.removeItem("authToken");
     window.location.href = "/login";
     return res;
