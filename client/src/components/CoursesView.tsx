@@ -50,7 +50,6 @@ interface Curriculum {
   program_id: number;
   course_code: string;
   term?: string;
-  subject_type?: "Major" | "Minor";
 }
 
 interface Employee {
@@ -63,7 +62,6 @@ interface Placement {
   program_id: number;
   year_level: string;
   term?: string;
-  subject_type?: "Major" | "Minor";
 }
 
 interface CourseFormValues {
@@ -267,7 +265,7 @@ function CourseForm({
           {placements.map((pl, i) => (
             <div
               key={i}
-              className="grid grid-cols-[minmax(220px,1.5fr)_130px_150px_120px_auto] gap-2 items-center"
+              className="grid grid-cols-[minmax(220px,1.5fr)_130px_150px_auto] gap-2 items-center"
             >
               <Select
                 value={String(pl.program_id)}
@@ -325,22 +323,7 @@ function CourseForm({
                   ))}
                 </SelectContent>
               </Select>
-              <Select
-                value={pl.subject_type ?? "Major"}
-                onValueChange={(v) =>
-                  updatePlacement(i, {
-                    subject_type: v as "Major" | "Minor",
-                  })
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Subject Type" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Major">Major</SelectItem>
-                  <SelectItem value="Minor">Minor</SelectItem>
-                </SelectContent>
-              </Select>
+
               <Button
                 type="button"
                 variant="ghost"
@@ -534,14 +517,15 @@ export function CoursesView() {
   const saveCurriculumForCourse = async (
     courseCode: string,
     placements: Placement[],
+    current?: Curriculum[],
   ) => {
-    const existing = curriculums.filter((c) => c.course_code === courseCode);
-
+    const existing = (current ?? curriculums).filter(
+      (c) => c.course_code === courseCode,
+    );
     const post = (p: {
       year_level: string;
       program_id: number;
       term?: string;
-      subject_type?: "Major" | "Minor" | null;
     }) =>
       fetch("/api/curriculum", {
         method: "POST",
@@ -551,7 +535,6 @@ export function CoursesView() {
           program_id: p.program_id,
           course_code: courseCode,
           term: p.term ?? "1st Semester",
-          subject_type: p.subject_type ?? null,
         }),
       });
 
@@ -571,7 +554,6 @@ export function CoursesView() {
             year_level: c.year_level,
             program_id: c.program_id,
             term: c.term,
-            subject_type: c.subject_type,
           }),
         ),
       );
@@ -588,16 +570,6 @@ export function CoursesView() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ employee_ids: employeeIds }),
     });
-  };
-
-  const changeSubjectType = async (curriculumId: number, value: string) => {
-    const res = await fetch(`/api/curriculum/${curriculumId}/subject-type`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ subject_type: value }),
-    });
-    if (res.ok) fetchAll();
-    else toast.error("Failed to update subject type");
   };
 
   const handleAdd = async (v: CourseFormValues) => {
@@ -633,8 +605,16 @@ export function CoursesView() {
 
   const handleEdit = async (v: CourseFormValues) => {
     if (!editingId || !v.course_description || !v.course_type_id) return;
+    const id = editingId;
+    const old = courses.find((c) => c.course_code === id);
+    const oldPlacements: Placement[] = placementsOfCourse(id).map((cu) => ({
+      program_id: cu.program_id,
+      year_level: cu.year_level,
+      term: cu.term,
+    }));
+    const oldEmployeeIds = editingEmployeeIds;
     try {
-      const res = await fetch(`/api/courses/${editingId}`, {
+      const res = await fetch(`/api/courses/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -647,11 +627,20 @@ export function CoursesView() {
         toast.error(data.error ?? "Could not update the course.");
         return;
       }
-      await saveCurriculumForCourse(editingId, v.placements);
-      await saveCourseEmployees(editingId, v.employee_ids);
-      toast.success("Course updated successfully");
+      await saveCurriculumForCourse(id, v.placements);
+      await saveCourseEmployees(id, v.employee_ids);
       setEditingId(null);
-      fetchAll();
+      await fetchAll();
+      toast.success("Course updated successfully", {
+        duration: 8000,
+        action: { label: "View", onClick: () => goToCourse(id) },
+        cancel: old
+          ? {
+              label: "Undo",
+              onClick: () => undoEdit(id, old, oldPlacements, oldEmployeeIds),
+            }
+          : undefined,
+      });
     } catch (err) {
       console.error("Failed to update course", err);
       toast.error(
@@ -659,6 +648,38 @@ export function CoursesView() {
           ? `${err.message}. Placements were restored.`
           : "Could not save the course placements.",
       );
+    }
+  };
+
+  const undoEdit = async (
+    code: string,
+    old: Course,
+    oldPlacements: Placement[],
+    oldEmployeeIds: number[],
+  ) => {
+    try {
+      const res = await fetch(`/api/courses/${code}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          course_description: old.course_description,
+          course_type_id: old.course_type_id,
+        }),
+      });
+      if (!res.ok) {
+        toast.error("Failed to undo edit");
+        return;
+      }
+      const fresh: Curriculum[] = await fetch("/api/curriculum").then((r) =>
+        r.json(),
+      );
+      await saveCurriculumForCourse(code, oldPlacements, fresh);
+      await saveCourseEmployees(code, oldEmployeeIds);
+      await fetchAll();
+      goToCourse(code);
+      toast.success("Edit undone");
+    } catch {
+      toast.error("Failed to undo edit");
     }
   };
 
@@ -1230,7 +1251,6 @@ export function CoursesView() {
                   program_id: cu.program_id,
                   year_level: cu.year_level,
                   term: cu.term,
-                  subject_type: cu.subject_type,
                 }),
               ),
               employee_ids: editingEmployeeIds,

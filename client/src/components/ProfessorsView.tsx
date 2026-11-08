@@ -491,12 +491,14 @@ export function ProfessorsView() {
       )
       .catch(() => {});
   }, []);
-
   const saveAvailabilityForEmployee = async (
     employeeId: number,
     slots: SlotDraft[],
+    current?: Availability[],
   ) => {
-    const existing = availability.filter((a) => a.employee_id === employeeId);
+    const existing = (current ?? availability).filter(
+      (a) => a.employee_id === employeeId,
+    );
     for (const a of existing) {
       const r = await fetch(`/api/availability/${a.availability_id}`, {
         method: "DELETE",
@@ -586,8 +588,11 @@ export function ProfessorsView() {
     )
       return;
     savingRef.current = true;
+    const id = editingId;
+    const old = employees.find((e) => e.employee_id === id);
+    const oldSlots = slotsForEmployee(id);
     try {
-      const res = await fetch(`/api/employees/${editingId}`, {
+      const res = await fetch(`/api/employees/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -609,10 +614,16 @@ export function ProfessorsView() {
         toast.error(data.error ?? "Could not update the Instructor.");
         return;
       }
-      await saveAvailabilityForEmployee(editingId, values.slots);
-      toast.success("Instructor updated successfully");
+      await saveAvailabilityForEmployee(id, values.slots);
       setEditingId(null);
-      fetchAll();
+      await fetchAll();
+      toast.success("Instructor updated successfully", {
+        duration: 8000,
+        action: { label: "View", onClick: () => goToProfessor(id) },
+        cancel: old
+          ? { label: "Undo", onClick: () => undoEdit(id, old, oldSlots) }
+          : undefined,
+      });
     } catch (err) {
       console.error("Failed to update Instructor", err);
       toast.error(
@@ -621,6 +632,37 @@ export function ProfessorsView() {
       fetchAll();
     } finally {
       savingRef.current = false;
+    }
+  };
+
+  const undoEdit = async (id: number, old: Employee, oldSlots: SlotDraft[]) => {
+    try {
+      const res = await fetch(`/api/employees/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          department: old.department,
+          fname: old.fname,
+          mname: old.mname,
+          lname: old.lname,
+          position: old.position,
+          max_hours_per_day: old.max_hours_per_day,
+          max_hours_per_week: old.max_hours_per_week,
+        }),
+      });
+      if (!res.ok) {
+        toast.error("Failed to undo edit");
+        return;
+      }
+      const fresh: Availability[] = await fetch("/api/availability").then((r) =>
+        r.json(),
+      );
+      await saveAvailabilityForEmployee(id, oldSlots, fresh);
+      await fetchAll();
+      goToProfessor(id);
+      toast.success("Edit undone");
+    } catch {
+      toast.error("Failed to undo edit");
     }
   };
 

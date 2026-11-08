@@ -80,7 +80,7 @@ export function ImportExcelButton({
       <input
         ref={inputRef}
         type="file"
-        accept=".xlsx,.xls"
+        accept=".xlsx,.xls,.csv"
         hidden
         onChange={handleFile}
       />

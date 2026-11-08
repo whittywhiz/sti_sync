@@ -197,8 +197,10 @@ export function RoomsView() {
 
   const saveEdit = async (values: RoomFormValues) => {
     if (!editingId || !values.room_number) return;
+    const id = editingId;
+    const old = rooms.find((r) => r.room_id === id);
     try {
-      const res = await fetch(`/api/rooms/${editingId}`, {
+      const res = await fetch(`/api/rooms/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(values),
@@ -208,12 +210,45 @@ export function RoomsView() {
         toast.error(data.error ?? "Could not update the room.");
         return;
       }
-      toast.success("Room updated successfully");
       setEditingId(null);
-      fetchRooms();
+      await fetchRooms();
+      toast.success("Room updated successfully", {
+        duration: 8000,
+        action: { label: "View", onClick: () => goToRoom(id) },
+        cancel: old
+          ? {
+              label: "Undo",
+              onClick: () =>
+                undoEdit(id, {
+                  room_number: old.room_number,
+                  capacity: old.capacity,
+                  type: old.type,
+                }),
+            }
+          : undefined,
+      });
     } catch (err) {
       console.error("Failed to update room", err);
       toast.error("Could not update the room.");
+    }
+  };
+
+  const undoEdit = async (id: number, values: RoomFormValues) => {
+    try {
+      const res = await fetch(`/api/rooms/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(values),
+      });
+      if (!res.ok) {
+        toast.error("Failed to undo edit");
+        return;
+      }
+      await fetchRooms();
+      goToRoom(id);
+      toast.success("Edit undone");
+    } catch {
+      toast.error("Failed to undo edit");
     }
   };
   const cancelEdit = () => {

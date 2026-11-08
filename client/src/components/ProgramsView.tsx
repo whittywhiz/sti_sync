@@ -203,7 +203,6 @@ export function ProgramsView() {
         p.program_id !== editingId &&
         p.description.toLowerCase() === description.toLowerCase(),
     );
-
     if (isDuplicateName) {
       toast.error("A program with this name already exists.");
       return;
@@ -214,7 +213,6 @@ export function ProgramsView() {
         p.program_id !== editingId &&
         p.code?.toLowerCase() === code.toLowerCase(),
     );
-
     if (isDuplicateCode) {
       toast.error("A program with this code already exists.");
       return;
@@ -225,8 +223,12 @@ export function ProgramsView() {
       return;
     }
 
+    const id = editingId;
+    if (id === null) return;
+    const old = programs.find((p) => p.program_id === id);
+
     try {
-      const res = await fetch(`/api/programs/${editingId}`, {
+      const res = await fetch(`/api/programs/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ description, code }),
@@ -236,12 +238,40 @@ export function ProgramsView() {
         toast.error(data.error ?? "Failed to update program");
         return;
       }
-      toast.success("Program updated successfully");
       setEditingId(null);
-      fetchAll();
+      await fetchAll();
+      toast.success("Program updated successfully", {
+        duration: 8000,
+        action: { label: "View", onClick: () => goToProgram(id) },
+        cancel: old
+          ? {
+              label: "Undo",
+              onClick: () => undoEdit(id, old.description, old.code ?? ""),
+            }
+          : undefined,
+      });
     } catch (err) {
       console.error("Failed to update program", err);
       toast.error("Failed to update program");
+    }
+  };
+
+  const undoEdit = async (id: number, description: string, code: string) => {
+    try {
+      const res = await fetch(`/api/programs/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ description, code }),
+      });
+      if (!res.ok) {
+        toast.error("Failed to undo edit");
+        return;
+      }
+      await fetchAll();
+      goToProgram(id);
+      toast.success("Edit undone");
+    } catch {
+      toast.error("Failed to undo edit");
     }
   };
   const deleteWithUndo = (ids: number[]) => {
@@ -286,7 +316,6 @@ export function ProgramsView() {
       },
     });
   };
-
   const toggleSelect = (id: number) =>
     setSelected((s) =>
       s.includes(id) ? s.filter((x) => x !== id) : [...s, id],

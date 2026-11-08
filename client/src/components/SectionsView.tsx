@@ -363,8 +363,10 @@ export function SectionsView() {
 
   const handleEdit = async (v: SectionFormValues) => {
     if (!editingId || !v.program_id || !v.year_level) return;
+    const id = editingId;
+    const old = sections.find((s) => s.section_id === id);
     try {
-      const res = await fetch(`/api/sections/${editingId}`, {
+      const res = await fetch(`/api/sections/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -379,12 +381,42 @@ export function SectionsView() {
         toast.error(data.error || "Failed to update section");
         return;
       }
-      toast.success("Section updated successfully");
       setEditingId(null);
-      fetchAll();
+      await fetchAll();
+      toast.success("Section updated successfully", {
+        duration: 8000,
+        action: { label: "View", onClick: () => goToSection(id) },
+        cancel: old
+          ? { label: "Undo", onClick: () => undoEdit(id, old) }
+          : undefined,
+      });
     } catch (err) {
       console.error("Failed to update section", err);
       setError("Error updating section");
+    }
+  };
+
+  const undoEdit = async (id: number, old: Section) => {
+    try {
+      const res = await fetch(`/api/sections/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          section_name: old.section_name,
+          program_id: old.program_id,
+          year_level: old.year_level,
+          number_of_students: old.number_of_students,
+        }),
+      });
+      if (!res.ok) {
+        toast.error("Failed to undo edit");
+        return;
+      }
+      await fetchAll();
+      goToSection(id);
+      toast.success("Edit undone");
+    } catch {
+      toast.error("Failed to undo edit");
     }
   };
 
@@ -544,9 +576,11 @@ export function SectionsView() {
         return;
       }
       toast.success(
-        `Copied ${data.copied} section${data.copied !== 1 ? "s" : ""}${
-          data.skipped ? `, skipped ${data.skipped} already here` : ""
-        }`,
+        `Copied ${data.copied} section${data.copied !== 1 ? "s" : ""}` +
+          (data.skipped ? `, ${data.skipped} already here` : "") +
+          (data.skippedDeleted
+            ? `, ${data.skippedDeleted} skipped (deleted program)`
+            : ""),
       );
       setShowCopy(false);
       setCopyFrom("");

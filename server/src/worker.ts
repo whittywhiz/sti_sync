@@ -61,12 +61,30 @@ function main() {
       EMPLOYEE_MAX_HOURS_EXCEEDED: "professors over their maximum hours",
       SAME_COURSE_SAME_DAY: "courses with both sessions on the same day",
     };
+    const HINTS: Record<string, string> = {
+      ROOM_CONFLICT:
+        "Reduce lab/PE course hours, or make sure all rooms are enabled and typed correctly (Rooms).",
+      EMPLOYEE_CONFLICT:
+        "Link another professor to the conflicting courses (Courses → Course Professors).",
+      SECTION_CONFLICT:
+        "Check for a course entered twice in Curriculum, or reduce course hours.",
+      EMPLOYEE_UNAVAILABLE:
+        "Widen the professors' availability (Professors), link a co-professor, or reduce course hours.",
+      ROOM_TYPE_MISMATCH: "Add enough Laboratory/Gym rooms (Rooms).",
+      EMPLOYEE_MAX_HOURS_EXCEEDED:
+        "Raise the professors' Max Hours, or move some courses to another professor.",
+      SAME_COURSE_SAME_DAY:
+        "Give the professor availability on at least 2 different days (Professors).",
+    };
     const summary = Object.entries(counts)
       .map(([type, n]) => `${n} ${LABELS[type] ?? type}`)
       .join(", ");
+    const hints = Object.keys(counts)
+      .map((t) => `- ${HINTS[t] ?? t}`)
+      .join("\n");
     parentPort?.postMessage({
       success: false,
-      error: `Could not build a conflict-free schedule. Problems left: ${summary}. Try again, or check the professors' availability and room data.`,
+      error: `Could not build a conflict-free schedule. Problems left: ${summary}.\nWhat to do:\n${hints}`,
     });
     return;
   }

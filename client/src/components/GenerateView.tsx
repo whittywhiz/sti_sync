@@ -39,6 +39,7 @@ interface GenerateResult {
   unassignedNoSlot?: number;
   labRoomIssues?: number;
   longGaps?: number;
+  warnings?: { text: string; hint: string }[];
 }
 
 interface SummaryCounts {
@@ -115,7 +116,7 @@ export function GenerateView() {
 
       if (!res.ok || !data.success) {
         setGenerating(false);
-        setError(data.error ?? "Failed to generate schedule");
+        setError(data.error ?? "Failed to generate timetable");
         return;
       }
 
@@ -132,7 +133,7 @@ export function GenerateView() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="font-heading text-2xl font-bold">Generate Schedule</h2>
+        <h2 className="font-heading text-2xl font-bold"> Generate Timetable</h2>
       </div>
 
       <motion.div
@@ -184,12 +185,17 @@ export function GenerateView() {
           size="lg"
           className="w-full"
         >
-          {generating ? "Generating…" : "Generate Schedule"}
+          {generating ? "Generating…" : "Generate Timetable"}
         </Button>
 
         {error && (
-          <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4">
-            <p className="text-sm text-destructive font-medium">{error}</p>
+          <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 space-y-1">
+            <p className="text-sm font-semibold text-destructive">
+              Generation failed
+            </p>
+            <p className="whitespace-pre-line text-sm text-destructive">
+              {error}
+            </p>
           </div>
         )}
       </motion.div>
@@ -229,6 +235,22 @@ export function GenerateView() {
             </button>
           </div>
 
+          {result.warnings && result.warnings.length > 0 && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 space-y-3">
+              <p className="text-sm font-medium">
+                Schedule created, but please review
+              </p>
+              {result.warnings.map((w) => (
+                <div key={w.text} className="text-sm">
+                  <p>• {w.text}</p>
+                  <p className="ml-4 text-muted-foreground">
+                    What to do: {w.hint}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+
           {(result.unassignedCount ?? 0) > 0 && (
             <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 space-y-1">
               <p className="text-sm font-medium">Professors still needed</p>
@@ -236,34 +258,12 @@ export function GenerateView() {
                 • {result.unassignedCount} classes have no professor yet. Assign
                 them from the Timetable.
               </p>
-              {(result.unassignedNoSlot ?? 0) > 0 && (
-                <p className="text-sm text-muted-foreground">
-                  • {result.unassignedNoSlot} of these have a professor linked,
-                  but none were free at any valid time
-                </p>
-              )}
-            </div>
-          )}
-          {result.capacityWarnings && result.capacityWarnings.length > 0 && (
-            <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 space-y-1">
-              <p className="text-sm font-medium">Room capacity warnings</p>
-              {result.capacityWarnings.map((w) => (
-                <p key={w} className="text-sm text-muted-foreground">
-                  • {w}
-                </p>
-              ))}
             </div>
           )}
 
-          {((result.labRoomIssues ?? 0) > 0 || (result.longGaps ?? 0) > 0) && (
+          {(result.longGaps ?? 0) > 0 && (
             <div className="rounded-lg border border-border bg-secondary p-4 space-y-1">
               <p className="text-sm font-medium">Minor notes</p>
-              {(result.labRoomIssues ?? 0) > 0 && (
-                <p className="text-sm text-muted-foreground">
-                  • {result.labRoomIssues} lab classes are not in their
-                  preferred lab room
-                </p>
-              )}
               {(result.longGaps ?? 0) > 0 && (
                 <p className="text-sm text-muted-foreground">
                   • {result.longGaps} long breaks between classes
@@ -315,7 +315,7 @@ export function GenerateView() {
               <Loader2 className="h-5 w-5 animate-spin text-gray-700" />
               <span className="text-sm text-gray-700">
                 {generating
-                  ? (error ?? "Generating schedule… this may take a moment.")
+                  ? (error ?? "Generating timetable… this may take a moment.")
                   : "Loading..."}
               </span>
             </div>

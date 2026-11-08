@@ -3,7 +3,7 @@ import cors from "cors";
 import jwt from "jsonwebtoken";
 import { pool } from "./db";
 import { buildSchedulingInputFromDB } from "./scheduling-data";
-import { buildRequirements, checkLabCapacity } from "./ga";
+import { buildRequirements, checkLabCapacity, checkRoomCapacity } from "./ga";
 import { evaluateFitness } from "./csp";
 import { runGAInWorker } from "./run-ga-worker";
 import bcrypt from "bcrypt";
@@ -153,7 +153,7 @@ app.post("/employees/import", upload.single("file"), async (req, res) => {
   if (byEmp.size === 0) {
     return res.status(400).json({
       error:
-        "No professors found in this file. It needs the columns lname and fname (plus department, position, max_hours_per_day, max_hours_per_week, availability_day, availability_start, availability_end). If this is a courses file, import it on the Courses page.",
+        "This doesn't look like an instructors file. If it's your courses file, import it on the Courses page. Otherwise, download the Instructors template from Help and use that.",
     });
   }
 
@@ -380,7 +380,7 @@ app.post("/courses/import", upload.single("file"), async (req, res) => {
   if (byCode.size === 0) {
     return res.status(400).json({
       error:
-        "No courses found in this file. It needs the columns course_code, course_description, course_type, program, year_level and term. If this is a professors file, import it on the Professors page.",
+        "This doesn't look like a courses file. If it's your instructors file, import it on the Instructor page. Otherwise, download the Courses template from Help and use that.",
     });
   }
 
@@ -898,20 +898,6 @@ app.post("/sections", async (req: Request, res: Response) => {
   }
 });
 
-async function autoAssignMinorProfessors(courseCode: string) {
-  await pool.query(
-    `INSERT INTO course_employee (course_code, employee_id)
-     SELECT $1::varchar, e.employee_id
-     FROM employee e
-           WHERE e.department = 'GE'
-       AND e.is_archived = false
-       AND NOT EXISTS (
-         SELECT 1 FROM course_employee WHERE course_code = $1::varchar
-       )
-     ON CONFLICT DO NOTHING`,
-    [courseCode],
-  );
-}
 app.post("/sections/copy", async (req: Request, res: Response) => {
   const fromId = Number(req.body.from_schedule_id);
   if (!Number.isInteger(fromId)) {
@@ -944,7 +930,8 @@ app.post("/sections/copy", async (req: Request, res: Response) => {
       `INSERT INTO section (number_of_students, year_level, program_id, section_name, schedule_id)
        SELECT s.number_of_students, s.year_level, s.program_id, s.section_name, $2::int
        FROM section s
-       WHERE s.schedule_id = $1::int
+              WHERE s.schedule_id = $1::int
+         AND s.program_id IN (SELECT program_id FROM program WHERE is_archived = false)
          AND NOT EXISTS (
            SELECT 1 FROM section t
            WHERE t.schedule_id = $2::int
@@ -956,32 +943,24 @@ app.post("/sections/copy", async (req: Request, res: Response) => {
       [fromId, toId],
     );
     const copied = r.rowCount ?? 0;
-    res.json({ success: true, copied, skipped: total.rows[0].n - copied });
+    const gone = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM section s
+       JOIN program p ON p.program_id = s.program_id
+       WHERE s.schedule_id = $1 AND p.is_archived = true`,
+      [fromId],
+    );
+    res.json({
+      success: true,
+      copied,
+      skippedDeleted: gone.rows[0].n,
+      skipped: total.rows[0].n - copied - gone.rows[0].n,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, error: "Failed to copy sections" });
   }
 });
 
-app.put("/curriculum/:id/subject-type", async (req: Request, res: Response) => {
-  const { subject_type } = req.body;
-  if (!["Major", "Minor"].includes(subject_type))
-    return res
-      .status(400)
-      .json({ error: "subject_type must be Major or Minor" });
-  try {
-    const r = await pool.query(
-      "UPDATE curriculum SET subject_type = $1 WHERE curriculum_id = $2 RETURNING course_code",
-      [subject_type, req.params.id],
-    );
-    if (r.rowCount === 0) return res.status(404).json({ error: "Not found" });
-    if (subject_type === "Minor")
-      await autoAssignMinorProfessors(r.rows[0].course_code);
-    res.json({ success: true });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
 app.get("/curriculum", async (_req: Request, res: Response) => {
   try {
     const result = await pool.query(
@@ -1345,7 +1324,6 @@ app.post("/curriculum", async (req: Request, res: Response) => {
     program_id,
     course_code,
     term = "1st Semester",
-    subject_type = null,
   } = req.body;
   if (!YEAR_LEVELS.includes(year_level)) {
     return res
@@ -1355,22 +1333,15 @@ app.post("/curriculum", async (req: Request, res: Response) => {
   if (!TERMS.includes(term)) {
     return res.status(400).json({ success: false, error: "Invalid term" });
   }
-  if (subject_type !== null && !["Major", "Minor"].includes(subject_type)) {
-    return res
-      .status(400)
-      .json({ success: false, error: "Invalid subject type" });
-  }
   try {
     const result = await pool.query(
-      `INSERT INTO curriculum (year_level, program_id, course_code, term, subject_type)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO curriculum (year_level, program_id, course_code, term)
+       VALUES ($1, $2, $3, $4)
        ON CONFLICT ON CONSTRAINT curriculum_program_year_course_term_key
-       DO UPDATE SET subject_type = COALESCE(EXCLUDED.subject_type, curriculum.subject_type)
+       DO UPDATE SET term = EXCLUDED.term
        RETURNING *`,
-      [year_level, program_id, course_code, term, subject_type],
+      [year_level, program_id, course_code, term],
     );
-    if (result.rows[0].subject_type === "Minor")
-      await autoAssignMinorProfessors(course_code);
     res.status(201).json(result.rows[0]);
   } catch (err) {
     console.error(err);
@@ -1550,31 +1521,22 @@ app.put("/courses/:code/curriculum", async (req: Request, res: Response) => {
         .status(400)
         .json({ success: false, error: "Invalid year level or term" });
     }
-    if (
-      p.subject_type !== null &&
-      !["Major", "Minor"].includes(p.subject_type)
-    ) {
-      return res
-        .status(400)
-        .json({ success: false, error: "Invalid subject type" });
-    }
   }
+
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
     await client.query("DELETE FROM curriculum WHERE course_code = $1", [code]);
     for (const p of placements) {
       await client.query(
-        `INSERT INTO curriculum (year_level, program_id, course_code, term, subject_type)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO curriculum (year_level, program_id, course_code, term)
+         VALUES ($1, $2, $3, $4)
          ON CONFLICT ON CONSTRAINT curriculum_program_year_course_term_key DO NOTHING`,
-        [p.year_level, p.program_id, code, p.term, p.subject_type],
+        [p.year_level, p.program_id, code, p.term],
       );
     }
     await client.query("COMMIT");
-    if (placements.some((p: any) => p.subject_type === "Minor")) {
-      await autoAssignMinorProfessors(String(code));
-    }
+
     res.json({ success: true });
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
@@ -1939,15 +1901,15 @@ app.delete("/employees/:id", async (req: Request, res: Response) => {
         .status(404)
         .json({ success: false, error: "Employee not found" });
     }
+    await pool.query("DELETE FROM course_employee WHERE employee_id = $1", [
+      id,
+    ]);
     res.json({ success: true, deleted: result.rows[0] });
-  } catch (err: any) {
-    if (err.code === "23503" || err.code === "23001" || err.code === "23P01") {
-      return res.status(409).json({
-        error:
-          "Can't delete: this professor is scheduled in classes or assigned to courses.",
-      });
-    }
-    res.status(500).json({ error: err.message });
+  } catch (err) {
+    console.error(err);
+    res
+      .status(500)
+      .json({ success: false, error: "Failed to delete employee" });
   }
 });
 
@@ -2101,7 +2063,8 @@ app.post("/generate-schedule", async (req: Request, res: Response) => {
     if (activeScheduleResult.rows.length === 0) {
       return res.status(400).json({
         success: false,
-        error: "No active schedule found. Create an active schedule first.",
+        error:
+          "No active schedule found. Create an active schedule first.\nWhat to do: Go to Sec, select the semester, and set it active.",
       });
     }
 
@@ -2114,13 +2077,30 @@ app.post("/generate-schedule", async (req: Request, res: Response) => {
       return res.status(400).json({
         success: false,
         error:
-          "No scheduling requirements found. Check that curriculum entries match section program_id + year_level.",
+          "No courses were found for the sections in this semester.\nWhat to do: Go to Courses and make sure each course is placed in the right program, year level and term. Then check that this semester has sections (Sections page).",
       });
     }
 
-    const problem = checkLabCapacity(requirements, input); // <- new
-    if (problem) {
-      return res.status(400).json({ success: false, error: problem });
+    const checks: [string | null, string][] = [
+      [
+        checkLabCapacity(requirements, input),
+        "Reduce the lab hours (Courses → Course Types), or add/enable lab rooms in Rooms.",
+      ],
+      [
+        checkRoomCapacity(requirements, input, "lecture"),
+        "Reduce course hours, or add/enable lecture rooms in Rooms.",
+      ],
+      [
+        checkRoomCapacity(requirements, input, "pe"),
+        "Reduce PE hours, or add/enable Gym rooms in Rooms.",
+      ],
+    ];
+    const failed = checks.find(([msg]) => msg);
+    if (failed) {
+      return res.status(400).json({
+        success: false,
+        error: `${failed[0]}\nWhat to do: ${failed[1]}`,
+      });
     }
     const gaStart = Date.now();
     const gaResult = await runGAInWorker(input, 50, 200);
@@ -2139,6 +2119,16 @@ app.post("/generate-schedule", async (req: Request, res: Response) => {
     ]);
 
     const a = gaResult.best.assignments;
+    const alive = await client.query(
+      "SELECT section_id FROM section WHERE schedule_id = $1 FOR SHARE",
+      [scheduleId],
+    );
+    const ids = new Set(alive.rows.map((r: any) => r.section_id));
+    if (a.some((x) => !ids.has(x.section_id))) {
+      throw new Error(
+        "A section was deleted while generating. Please click Generate again.",
+      );
+    }
     const insertResult = await client.query(
       `INSERT INTO class (start_time, end_time, employee_id, room_id, section_id, course_code, day_id, schedule_id)
    SELECT * FROM unnest($1::time[], $2::time[], $3::int[], $4::int[], $5::int[], $6::varchar[], $7::int[], $8::int[])
@@ -2202,7 +2192,28 @@ app.post("/generate-schedule", async (req: Request, res: Response) => {
     const unassignedNoSlot = a.filter(
       (x) => x.employee_id === null && coursesWithProf.has(x.course_code),
     ).length;
+
+    const labIssues = violations.filter(
+      (v) => v.type === "HOME_LAB_PREFERENCE_UNMET",
+    ).length;
+    const warnings: { text: string; hint: string }[] = [];
+    if (unassignedNoSlot > 0)
+      warnings.push({
+        text: `${unassignedNoSlot} classes have a linked instructor but no free slot, so they're Unassigned.`,
+        hint: "Add instructor availability, link another instructor, or assign one on the Timetable.",
+      });
+    if (capacityWarnings.length > 0)
+      warnings.push({
+        text: `${capacityWarnings.length} sections are in rooms smaller than their size.`,
+        hint: "Swap to a larger room on the Timetable, or lower the section's student count.",
+      });
+    if (labIssues > 0)
+      warnings.push({
+        text: `${labIssues} lab classes are not in their program's home lab.`,
+        hint: "Review on the Timetable, or leave as is if the lab has enough computers.",
+      });
     const responsePayload = {
+      warnings,
       success: true,
       fitness: gaResult.best.fitness,
       isConflictFree: gaResult.feasible,

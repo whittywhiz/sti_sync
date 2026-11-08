@@ -480,7 +480,7 @@ function roomPoolForRequirement(
   if (matchingTypeRooms.length > 0) return filterReserved(matchingTypeRooms);
   return filterReserved(input.rooms);
 }
-
+const LAB_UTILIZATION_LIMIT = 0.8; // starting guess, tune with real data
 export function checkLabCapacity(
   requirements: SchedulingRequirement[],
   input: SchedulingInput,
@@ -528,8 +528,68 @@ export function checkLabCapacity(
       }
     });
     const cap = rooms.size * hoursPerRoom;
-    if (need > cap)
-      return `Laboratory demand ${need}h exceeds capacity ${cap}h for: ${[...rooms.values()].join(", ") || "no lab room"}.`;
+    const usable = Math.floor(cap * LAB_UTILIZATION_LIMIT);
+    if (need > usable)
+      return `Laboratory demand ${need}h exceeds usable capacity ${usable}h (${LAB_UTILIZATION_LIMIT * 100}% of ${cap}h) for: ${[...rooms.values()].join(", ") || "no lab room"}. Reduce lab hours or add lab rooms.`;
+  }
+  return null;
+}
+const ROOM_UTILIZATION_LIMITS: Record<string, number> = {
+  lecture: 0.9,
+  pe: 0.85,
+};
+
+export function checkRoomCapacity(
+  requirements: SchedulingRequirement[],
+  input: SchedulingInput,
+  type: "lecture" | "pe",
+): string | null {
+  const limit = ROOM_UTILIZATION_LIMITS[type]!;
+  const label = type === "pe" ? "Gym" : "Lecture room";
+  const courseMap = new Map(input.courses.map((c) => [c.course_code, c]));
+  const sectionMap = new Map(input.sections.map((s) => [s.section_id, s]));
+  const hoursPerRoom =
+    (input.days.length * (WORKING_DAY_END_MIN - WORKING_DAY_START_MIN)) / 60;
+
+  const pools = new Map<
+    string,
+    { rooms: Map<number, string>; hours: number }
+  >();
+  for (const req of requirements) {
+    const courseType = (
+      courseMap.get(req.course_code)?.course_type_description ?? ""
+    ).toLowerCase();
+    if (courseType !== type) continue;
+    const pid = sectionMap.get(req.section_id)?.program_id ?? 0;
+    const rooms = roomPoolForRequirement(req, courseType, input, pid).filter(
+      (r) => r.type?.toLowerCase() === type,
+    );
+    const key = rooms
+      .map((r) => r.room_id)
+      .sort((a, b) => a - b)
+      .join(",");
+    if (!pools.has(key))
+      pools.set(key, {
+        rooms: new Map(rooms.map((r) => [r.room_id, r.room_number.trim()])),
+        hours: 0,
+      });
+    pools.get(key)!.hours += req.session_duration_hours;
+  }
+
+  const list = [...pools.values()];
+  for (let mask = 1; mask < 1 << list.length; mask++) {
+    const rooms = new Map<number, string>();
+    let need = 0;
+    list.forEach((p, i) => {
+      if (mask & (1 << i)) {
+        p.rooms.forEach((n, id) => rooms.set(id, n));
+        need += p.hours;
+      }
+    });
+    const cap = rooms.size * hoursPerRoom;
+    const usable = Math.floor(cap * limit);
+    if (need > usable)
+      return `${label} demand ${need}h exceeds usable capacity ${usable}h (${limit * 100}% of ${cap}h) for: ${[...rooms.values()].join(", ") || "no " + label.toLowerCase()}. Reduce course hours or add rooms.`;
   }
   return null;
 }
