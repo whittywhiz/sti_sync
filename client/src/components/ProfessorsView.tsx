@@ -134,6 +134,16 @@ function ProfessorForm({
     }
     setSaveError(msg);
   };
+  const slotShake = useAnimationControls();
+  const slotFail = (msg: string) => {
+    if (slotError === msg) {
+      slotShake.start({
+        x: [0, -6, 6, -4, 4, 0],
+        transition: { duration: 0.4 },
+      });
+    }
+    setSlotError(msg);
+  };
   const [departments, setDepartments] = useState<string[]>([]);
 
   useEffect(() => {
@@ -148,7 +158,7 @@ function ProfessorForm({
 
   const addSlot = () => {
     if (selEnd <= selStart) {
-      setSlotError("End time must be after start time.");
+      slotFail("End time must be after start time.");
       return;
     }
 
@@ -160,7 +170,7 @@ function ProfessorForm({
           selEnd > s.start_hour,
       )
     ) {
-      setSlotError("This time overlaps with an existing availability.");
+      slotFail("This time overlaps with an existing availability.");
       return;
     }
     setSlotError(null);
@@ -384,7 +394,12 @@ function ProfessorForm({
             Add Slot
           </Button>
           {slotError && (
-            <p className="text-xs text-destructive mt-1 w-full">{slotError}</p>
+            <motion.p
+              animate={slotShake}
+              className="text-xs text-destructive mt-1 w-full"
+            >
+              {slotError}
+            </motion.p>
           )}
         </div>
         <div className="flex gap-2 mt-2 flex-wrap">
