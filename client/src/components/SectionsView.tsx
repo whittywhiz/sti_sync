@@ -20,7 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useAnimationControls } from "framer-motion";
 import { toast } from "sonner";
 import { ConfirmDeleteDialog } from "@/components/ConfirmDeleteDialog";
 import { Modal } from "@/components/Modal";
@@ -94,19 +94,26 @@ function SectionForm({
     initial.number_of_students ? String(initial.number_of_students) : "",
   );
   const [error, setError] = useState("");
+  const shake = useAnimationControls();
+  const fail = (msg: string) => {
+    if (error === msg) {
+      shake.start({ x: [0, -6, 6, -4, 4, 0], transition: { duration: 0.4 } });
+    }
+    setError(msg);
+  };
 
   const handleSave = () => {
     if (!programId) {
-      setError("Program is required.");
+      fail("Program is required.");
       return;
     }
     const trimmedName = sectionName.trim().toUpperCase();
     if (!trimmedName) {
-      setError("Section letter is required.");
+      fail("Section letter is required.");
       return;
     }
     if (trimmedName.length > 20) {
-      setError("Section letter must be 20 characters or less.");
+      fail("Section letter must be 20 characters or less.");
       return;
     }
     const countNum = Number(studentCount);
@@ -116,7 +123,7 @@ function SectionForm({
       countNum <= 0 ||
       countNum > MAX_STUDENTS
     ) {
-      setError(
+      fail(
         `Number of students must be an integer between 1 and ${MAX_STUDENTS}.`,
       );
       return;
@@ -194,7 +201,11 @@ function SectionForm({
         />
       </div>
 
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      {error && (
+        <motion.p animate={shake} className="text-xs text-destructive">
+          {error}
+        </motion.p>
+      )}
 
       <div className="flex gap-2">
         <Button type="submit" size="sm">
@@ -278,6 +289,16 @@ export function SectionsView() {
   const [semStart, setSemStart] = useState("");
   const [semEnd, setSemEnd] = useState("");
   const [semError, setSemError] = useState("");
+  const semShake = useAnimationControls();
+  const semFail = (msg: string) => {
+    if (semError === msg) {
+      semShake.start({
+        x: [0, -6, 6, -4, 4, 0],
+        transition: { duration: 0.4 },
+      });
+    }
+    setSemError(msg);
+  };
   const [search, setSearch] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<Section | null>(null);
   const [selected, setSelected] = useState<number[]>([]);
@@ -533,11 +554,11 @@ export function SectionsView() {
 
   const createSemester = async () => {
     if (!/^\d{4}$/.test(semYear))
-      return setSemError("Enter a 4-digit year, e.g. 2025.");
+      return semFail("Enter a 4-digit year, e.g. 2025.");
     if (!semStart || !semEnd)
-      return setSemError("Start and end dates are required.");
+      return semFail("Start and end dates are required.");
     if (semEnd <= semStart)
-      return setSemError("End date must be after the start date.");
+      return semFail("End date must be after the start date.");
     setSemError("");
     try {
       const res = await fetch("/api/schedules", {
@@ -991,7 +1012,11 @@ export function SectionsView() {
               onChange={(e) => setSemEnd(e.target.value)}
             />
           </div>
-          {semError && <p className="text-xs text-destructive">{semError}</p>}
+          {semError && (
+            <motion.p animate={semShake} className="text-xs text-destructive">
+              {semError}
+            </motion.p>
+          )}
           <div className="flex gap-2">
             <Button size="sm" onClick={createSemester}>
               <Check className="w-4 h-4 mr-1" /> Create

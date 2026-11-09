@@ -10,6 +10,7 @@ import {
   ChevronDown,
   Loader2,
 } from "lucide-react";
+import { motion, useAnimationControls } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { authFetch } from "../lib/authFetch";
@@ -119,6 +120,13 @@ function CourseForm({
     initial.employee_ids,
   );
   const [error, setError] = useState("");
+  const shake = useAnimationControls();
+  const fail = (msg: string) => {
+    if (error === msg) {
+      shake.start({ x: [0, -6, 6, -4, 4, 0], transition: { duration: 0.4 } });
+    }
+    setError(msg);
+  };
   const TYPE_ORDER = ["Laboratory", "Lecture", "PE"];
   const sortedCourseTypes = [...courseTypes].sort(
     (a, b) =>
@@ -176,22 +184,23 @@ function CourseForm({
 
   const handleSave = () => {
     if (!courseCode.trim()) {
-      setError("Course code is required.");
+      fail("Course code is required.");
       return;
     }
     if (!description.trim()) {
-      setError("Course description is required.");
+      fail("Course description is required.");
+
       return;
     }
     if (!courseTypeId) {
-      setError("Course type is required.");
+      fail("Course type is required.");
       return;
     }
     const keys = placements.map(
       (p) => `${p.program_id}|${p.year_level}|${p.term}`,
     );
     if (new Set(keys).size !== keys.length) {
-      setError(
+      fail(
         "Two placements have the same program, year level and term. Remove one.",
       );
       return;
@@ -422,7 +431,11 @@ function CourseForm({
           </div>
         )}
       </div>
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      {error && (
+        <motion.p animate={shake} className="text-xs text-destructive">
+          {error}
+        </motion.p>
+      )}
 
       <div className="flex gap-2">
         <Button type="submit" size="sm">

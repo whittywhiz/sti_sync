@@ -9,7 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useAnimationControls } from "framer-motion";
 import { ConfirmDeleteDialog } from "@/components/ConfirmDeleteDialog";
 import { Modal } from "@/components/Modal";
 import { toast } from "sonner";
@@ -41,10 +41,17 @@ function RoomForm({ initial, onSave, onCancel, stacked }: RoomFormProps) {
   const [capacity, setCapacity] = useState(String(initial.capacity));
   const [type, setType] = useState(initial.type);
   const [error, setError] = useState("");
+  const shake = useAnimationControls();
+  const fail = (msg: string) => {
+    if (error === msg) {
+      shake.start({ x: [0, -6, 6, -4, 4, 0], transition: { duration: 0.4 } });
+    }
+    setError(msg);
+  };
 
   const handleSave = () => {
     if (!roomNumber.trim()) {
-      setError("Room number is required.");
+      fail("Room number is required.");
       return;
     }
     const capNum = Number(capacity);
@@ -54,7 +61,7 @@ function RoomForm({ initial, onSave, onCancel, stacked }: RoomFormProps) {
       capNum <= 0 ||
       !Number.isInteger(capNum)
     ) {
-      setError("Capacity must be a whole number greater than 0.");
+      fail("Capacity must be a whole number greater than 0.");
       return;
     }
     setError("");
@@ -95,7 +102,11 @@ function RoomForm({ initial, onSave, onCancel, stacked }: RoomFormProps) {
           </SelectContent>
         </Select>
       </div>
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      {error && (
+        <motion.p animate={shake} className="text-xs text-destructive">
+          {error}
+        </motion.p>
+      )}
       <div className="flex gap-2">
         <Button size="sm" onClick={handleSave}>
           <Check className="w-4 h-4 mr-1" /> Save
