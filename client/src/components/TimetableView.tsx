@@ -341,7 +341,7 @@ const HEAD = [
   "Start Time",
   "End Time",
   "Course",
-  "Professor",
+  "Instructor",
   "Room",
   "Section",
 ];
@@ -736,7 +736,7 @@ export function TimetableView() {
     if (msg)
       toast.success(msg, {
         duration: 10000,
-
+        action: { label: "View", onClick: () => goToClass(id) },
         cancel: { label: "Undo", onClick: () => undoAssign(id, prevEmp) },
       });
   };
@@ -774,7 +774,10 @@ export function TimetableView() {
 
     const isVisible = classMatchesFilter(target, filterType, filterValue);
     if (!isVisible) {
-      if (filterType === "room") setFilterValue(target.room);
+      if (filterType === "professor" && target.employee_id === null) {
+        setFilterType("course");
+        setFilterValue(courseLabel(target));
+      } else if (filterType === "room") setFilterValue(target.room);
       else if (filterType === "professor") setFilterValue(target.professor);
       else if (filterType === "section") setFilterValue(sectionLabel(target));
       else if (filterType === "course") setFilterValue(courseLabel(target));
@@ -1391,7 +1394,7 @@ export function TimetableView() {
                               {isCompact ? (
                                 isUnassigned ? (
                                   <span className="inline-flex items-center text-[9px] font-semibold text-amber-800 bg-amber-100 rounded px-1.5 py-0.5 w-fit leading-none">
-                                    + Add Prof
+                                    + Add Instructor
                                   </span>
                                 ) : (
                                   <p className="text-[10px] font-medium truncate text-slate-600">
@@ -1405,7 +1408,7 @@ export function TimetableView() {
                                   </p>
                                   {isUnassigned ? (
                                     <span className="inline-flex items-center text-[9px] font-semibold text-amber-800 bg-amber-100 rounded px-1.5 py-0.5 w-fit leading-none">
-                                      + Add Prof
+                                      + Add Instructor
                                     </span>
                                   ) : (
                                     <p className="text-[10px] font-medium truncate text-slate-700">

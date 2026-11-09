@@ -406,8 +406,10 @@ function roomPoolForRequirement(
   }
 
   const filterReserved = (rooms: SchedulingInput["rooms"]) =>
-    rooms.filter(
-      (r) => r.program_id == null || r.program_id === sectionProgramId,
+    rooms.filter((r) =>
+      COMPUTER_LAB_COURSE_CODES.has(req.course_code)
+        ? r.program_id == null
+        : r.program_id == null || r.program_id === sectionProgramId,
     );
 
   const reservedForSection = input.rooms.filter(
@@ -480,7 +482,7 @@ function roomPoolForRequirement(
   if (matchingTypeRooms.length > 0) return filterReserved(matchingTypeRooms);
   return filterReserved(input.rooms);
 }
-const LAB_UTILIZATION_LIMIT = 0.8; // starting guess, tune with real data
+const LAB_UTILIZATION_LIMIT = 0.95; // starting guess, tune with real data
 export function checkLabCapacity(
   requirements: SchedulingRequirement[],
   input: SchedulingInput,
@@ -535,7 +537,7 @@ export function checkLabCapacity(
   return null;
 }
 const ROOM_UTILIZATION_LIMITS: Record<string, number> = {
-  lecture: 0.9,
+  lecture: 0.95,
   pe: 0.85,
 };
 

@@ -2103,7 +2103,7 @@ app.post("/generate-schedule", async (req: Request, res: Response) => {
       });
     }
     const gaStart = Date.now();
-    const gaResult = await runGAInWorker(input, 50, 200);
+    const gaResult = await runGAInWorker(input, 50, 400);
     console.log("GA done, inserting...");
     console.time("db insert");
     console.log(

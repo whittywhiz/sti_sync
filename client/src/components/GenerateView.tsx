@@ -255,8 +255,8 @@ export function GenerateView() {
             <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 space-y-1">
               <p className="text-sm font-medium">Instructor still needed</p>
               <p className="text-sm text-muted-foreground">
-                • {result.unassignedCount} classes have no professor yet. Assign
-                them from the Timetable.
+                • {result.unassignedCount} classes have no instructor yet.
+                Assign them from the Timetable.
               </p>
             </div>
           )}

@@ -84,7 +84,10 @@ interface CourseFormProps {
 const YEAR_LEVELS = ["1st Year", "2nd Year", "3rd Year", "4th Year"];
 const TERMS = ["1st Semester", "2nd Semester"];
 const UNPLACED = 0;
-
+const formatHrs = (h: number | string) => {
+  const n = Number(h);
+  return `${n} ${n === 1 ? "hr" : "hrs"}`;
+};
 function CourseForm({
   initial,
   programs,
@@ -237,7 +240,7 @@ function CourseForm({
               key={ct.course_type_id}
               value={String(ct.course_type_id)}
             >
-              {ct.course_type_description} ({ct.total_hours} hrs)
+              {ct.course_type_description} ({formatHrs(ct.total_hours)})
             </SelectItem>
           ))}
         </SelectContent>
@@ -963,7 +966,7 @@ export function CoursesView() {
               <th className="px-4 py-3 text-left">Description</th>
               <th className="px-4 py-3 text-left">Type</th>
               <th className="px-4 py-3 text-left">Placement</th>
-              <th className="px-4 py-3 text-left">Professor</th>
+              <th className="px-4 py-3 text-left">Instructor</th>
               <th className="px-4 py-0 text-right whitespace-nowrap">
                 {list.some((c) =>
                   selected.includes(keyOf(progId, c.course_code)),
@@ -1053,7 +1056,7 @@ export function CoursesView() {
                   <td className="px-4 py-3 align-top">
                     {!assignedCodes.has(c.course_code) && (
                       <span
-                        title="No professor assigned. Any available professor can be scheduled."
+                        title="No instructor assigned. Any available instructor can be scheduled."
                         className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200 whitespace-nowrap"
                       >
                         No Instructor assigned

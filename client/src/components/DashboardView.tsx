@@ -242,7 +242,7 @@ export function DashboardView() {
       tab: "programs",
     },
     {
-      label: "Professors",
+      label: "Instructors",
       value: counts.professors,
       icon: Users,
       tab: "professors",
@@ -323,7 +323,7 @@ export function DashboardView() {
             </p>
           ) : availableProfessors.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              No professors available right now.
+              No Instructor available right now.
             </p>
           ) : (
             <div className="border border-border/40 rounded-lg overflow-hidden">

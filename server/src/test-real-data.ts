@@ -125,7 +125,7 @@ async function main() {
   const startTime = Date.now();
   const result = runGA(requirements, input, {
     populationSize: 50,
-    maxGenerations: 200,
+    maxGenerations: 400,
   });
   // Check whether every requirement has an assignment.
   const assignmentCounts = new Map<string, number>();
