@@ -39,7 +39,11 @@ function PasswordInput({
   );
 }
 
-export default function ChangePasswordButton() {
+export default function ChangePasswordButton({
+  variant = "sidebar",
+}: {
+  variant?: "sidebar" | "login";
+}) {
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<"request" | "confirm">("request");
   const [sentTo, setSentTo] = useState("");
@@ -110,12 +114,22 @@ export default function ChangePasswordButton() {
 
   return (
     <>
-      <button
-        onClick={() => setOpen(true)}
-        className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-sidebar-foreground/80 hover:bg-sidebar-accent"
-      >
-        <KeyRound className="h-4 w-4" /> Change password
-      </button>
+      {variant === "login" ? (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="mt-1 text-[12.5px] text-[#2f5f9e] hover:underline"
+        >
+          Forgot password?
+        </button>
+      ) : (
+        <button
+          onClick={() => setOpen(true)}
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-sidebar-foreground/80 hover:bg-sidebar-accent"
+        >
+          <KeyRound className="h-4 w-4" /> Change password
+        </button>
+      )}
       {open &&
         createPortal(
           <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40">
@@ -148,8 +162,8 @@ export default function ChangePasswordButton() {
               ) : (
                 <>
                   <p className="text-sm text-gray-600">
-                    A 6-digit verification code will be sent to the
-                    administrator's email address
+                    Enter the code sent to{" "}
+                    {sentTo || "the administrator's email"}.
                   </p>
                   <input
                     inputMode="numeric"

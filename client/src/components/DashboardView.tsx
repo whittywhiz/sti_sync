@@ -82,7 +82,16 @@ function formatHour12(h: number): string {
   const hour12 = Math.floor(h) % 12 === 0 ? 12 : Math.floor(h) % 12;
   return `${hour12}:00 ${period}`;
 }
-
+function formatDuration(hours: number): string {
+  const totalMin = Math.round(hours * 60);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  const hText = `${h} ${h === 1 ? "hr" : "hrs"}`;
+  const mText = `${m} ${m === 1 ? "min" : "mins"}`;
+  if (h && m) return `${hText} ${mText}`;
+  if (h) return hText;
+  return mText;
+}
 export function DashboardView() {
   const { setActiveTab } = useSchedulingStore();
 
@@ -200,9 +209,25 @@ export function DashboardView() {
   }, [classes, todayName, nowHourFloat, isSchoolDay]);
 
   const occupiedRoomNumbers = new Set(ongoing.map((c) => c.room));
-  const vacantRooms = rooms.filter(
-    (r) => !occupiedRoomNumbers.has(r.room_number),
-  );
+  const vacantRooms = rooms
+    .filter((r) => !occupiedRoomNumbers.has(r.room_number))
+    .map((r) => {
+      const nextStart = isSchoolDay
+        ? classes
+            .filter(
+              (c) =>
+                c.day === todayName &&
+                c.room === r.room_number &&
+                timeToHourFloat(c.start_time) > nowHourFloat,
+            )
+            .map((c) => timeToHourFloat(c.start_time))
+            .sort((a, b) => a - b)[0]
+        : undefined;
+      return {
+        r,
+        freeFor: nextStart !== undefined ? nextStart - nowHourFloat : null,
+      };
+    });
 
   const busyProfessorNames = new Set(ongoing.map((c) => c.professor));
 
@@ -298,8 +323,26 @@ export function DashboardView() {
             <strong className="text-foreground">{timeLabel}</strong>
           </span>
         </div>
-      </div>
-
+      </div>{" "}
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        {stats.map((stat) => (
+          <button
+            key={stat.label}
+            onClick={() => setActiveTab(stat.tab)}
+            className="glass-card rounded-xl p-4 text-left hover:ring-2 hover:ring-primary/30 transition-all"
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-muted-foreground">{stat.label}</p>
+                <p className="text-2xl font-heading font-bold mt-0.5">
+                  {stat.value}
+                </p>
+              </div>
+              <stat.icon className="w-5 h-5 text-muted-foreground" />
+            </div>
+          </button>
+        ))}
+      </div>{" "}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <motion.div
           initial={{ opacity: 0, y: 12 }}
@@ -391,10 +434,11 @@ export function DashboardView() {
                       <TableHead className="text-xs">Room</TableHead>
                       <TableHead className="text-xs">Capacity</TableHead>
                       <TableHead className="text-xs">Type</TableHead>
+                      <TableHead className="text-xs">Vacant for</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {vacantRooms.map((r) => (
+                    {vacantRooms.map(({ r, freeFor }) => (
                       <TableRow key={r.room_id}>
                         <TableCell className="text-xs font-medium">
                           {r.room_number}
@@ -402,6 +446,11 @@ export function DashboardView() {
                         <TableCell className="text-xs">{r.capacity}</TableCell>
                         <TableCell className="text-xs text-muted-foreground">
                           {r.type}
+                        </TableCell>
+                        <TableCell className="text-xs font-medium">
+                          {freeFor === null
+                            ? "Rest of the day"
+                            : formatDuration(freeFor)}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -411,26 +460,6 @@ export function DashboardView() {
             </div>
           )}
         </motion.div>
-      </div>
-
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-        {stats.map((stat) => (
-          <button
-            key={stat.label}
-            onClick={() => setActiveTab(stat.tab)}
-            className="glass-card rounded-xl p-4 text-left hover:ring-2 hover:ring-primary/30 transition-all"
-          >
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-muted-foreground">{stat.label}</p>
-                <p className="text-2xl font-heading font-bold mt-0.5">
-                  {stat.value}
-                </p>
-              </div>
-              <stat.icon className="w-5 h-5 text-muted-foreground" />
-            </div>
-          </button>
-        ))}
       </div>
     </div>
   );

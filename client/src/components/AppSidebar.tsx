@@ -201,6 +201,23 @@ export function AppSidebar() {
                   <li key={s}>{s}</li>
                 ))}
               </ol>
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 p-3">
+                <div>
+                  <div className="text-sm font-medium">User Guide</div>
+                  <div className="text-xs text-gray-500">
+                    Full step-by-step guide with screenshots (PDF).
+                  </div>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    window.open("/STI-Sync_User_Guide.pdf", "_blank")
+                  }
+                >
+                  Open
+                </Button>
+              </div>
               <div className="space-y-2 border-t pt-4">
                 <h4 className="text-sm font-semibold">Import templates</h4>
                 {templates.map((t) => (

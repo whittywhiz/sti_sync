@@ -175,7 +175,7 @@ export default function AssignInstructorModal({
                   disabled={busy}
                   onClick={() => setSelEmp(null)}
                 >
-                  {selEmp === null ? "Will unassign" : "Unassign"}
+                  {selEmp === null ? "Will unassign" : "UNASSIGN"}
                 </button>
               )}
             </div>

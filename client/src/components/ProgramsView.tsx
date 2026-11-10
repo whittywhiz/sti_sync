@@ -382,8 +382,8 @@ export function ProgramsView() {
       {sorted.length > 0 && (
         <div className="glass-card rounded-xl max-h-[calc(100vh-250px)] overflow-y-auto">
           <table className="w-full text-sm">
-            <thead className="sticky top-0 bg-background text-xs font-semibold text-muted-foreground">
-              <tr className="border-b">
+            <thead className="sticky top-0 bg-[#0b1a3d] text-sm font-semibold text-white">
+              <tr className="border-b border-white/10">
                 <th className="w-10 px-4 py-3">
                   <input
                     type="checkbox"

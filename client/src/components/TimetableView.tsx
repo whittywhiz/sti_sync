@@ -1018,7 +1018,7 @@ export function TimetableView() {
       onClick={() => setHistoryOpen(false)}
     >
       <div
-        className="bg-white rounded-xl shadow-2xl w-full max-w-2xl p-6 max-h-[85vh] flex flex-col"
+        className="bg-white rounded-xl shadow-2xl w-full max-w-2xl p-6 h-[80vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-4">
@@ -1032,7 +1032,7 @@ export function TimetableView() {
             <X className="w-3.5 h-3.5" />
           </Button>
         </div>
-        <div className="overflow-y-auto min-h-0">
+        <div className="flex-1 overflow-y-auto min-h-0">
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-white">
               <tr className="border-b text-left text-xs uppercase text-muted-foreground">

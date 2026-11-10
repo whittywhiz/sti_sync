@@ -1,6 +1,7 @@
 ﻿import { useNavigate } from "react-router-dom";
 import { Eye, EyeOff } from "lucide-react";
 import { FormEvent, useState, useEffect } from "react";
+import ChangePasswordButton from "@/components/ChangePasswordButton";
 export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -137,6 +138,7 @@ export default function LoginPage() {
             {hint}
           </div>
         </form>
+        <ChangePasswordButton variant="login" />
       </div>
     </div>
   );

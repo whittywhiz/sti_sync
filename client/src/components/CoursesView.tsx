@@ -960,12 +960,12 @@ export function CoursesView() {
             <col className="w-28" />
             <col />
             <col className="w-28" />
-            <col className="w-40" />
+            <col className="w-48" />
             <col className="w-52" />
             <col className="w-32" />
           </colgroup>
-          <thead className="bg-background text-xs font-semibold text-muted-foreground">
-            <tr className="border-b">
+          <thead className="bg-[#0b1a3d] text-sm font-semibold text-white">
+            <tr className="border-b border-white/10">
               <th className="w-10 px-4 py-3">
                 <input
                   type="checkbox"
@@ -1045,7 +1045,7 @@ export function CoursesView() {
                   </td>
                   <td className="px-4 py-3 align-top">
                     {progId === UNPLACED ? (
-                      <span className="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-800 border border-red-200">
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-800 border border-red-200 whitespace-nowrap">
                         No program placement
                       </span>
                     ) : (
