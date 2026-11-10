@@ -320,10 +320,11 @@ function getConflictFreeStarts(
 ): number[] {
   const durationHours = durationMin / 60;
 
-  if (
-    employee.max_hours_per_day != null &&
-    currentDayHours + durationHours > employee.max_hours_per_day
-  ) {
+  const dayCap = Math.min(
+    employee.max_hours_per_day ?? NINE_HOUR_SOFT_LIMIT,
+    NINE_HOUR_SOFT_LIMIT,
+  );
+  if (currentDayHours + durationHours > dayCap) {
     return [];
   }
   if (
@@ -482,7 +483,7 @@ function roomPoolForRequirement(
   if (matchingTypeRooms.length > 0) return filterReserved(matchingTypeRooms);
   return filterReserved(input.rooms);
 }
-const LAB_UTILIZATION_LIMIT = 0.95; // starting guess, tune with real data
+const LAB_UTILIZATION_LIMIT = 0.95;
 export function checkLabCapacity(
   requirements: SchedulingRequirement[],
   input: SchedulingInput,
@@ -537,7 +538,7 @@ export function checkLabCapacity(
   return null;
 }
 const ROOM_UTILIZATION_LIMITS: Record<string, number> = {
-  lecture: 0.95,
+  lecture: 0.9,
   pe: 0.85,
 };
 
@@ -799,12 +800,6 @@ export function generateRandomCandidate(
         const booked = bookedIntervalsByEmployeeDay.get(key) ?? [];
         const dayHours = hoursByEmployeeDay.get(key) ?? 0;
         const weekHours = hoursByEmployeeWeek.get(employee.employee_id) ?? 0;
-
-        if (
-          dayHours + durationMin / 60 > NINE_HOUR_SOFT_LIMIT &&
-          eAttempt < EMPLOYEE_ATTEMPT_LIMIT - 1
-        )
-          continue;
 
         const validStarts = getConflictFreeStarts(
           employee,
@@ -1434,11 +1429,7 @@ export function mutate(
               assignment.day_id,
               index,
             );
-            if (
-              dayHours + durationMin / 60 > NINE_HOUR_SOFT_LIMIT &&
-              attempt < EMPLOYEE_ATTEMPT_LIMIT - 1
-            )
-              continue;
+
             const validStarts = getConflictFreeStarts(
               candidateEmployee,
               windows,
@@ -1521,11 +1512,7 @@ export function mutate(
                 day.day_id,
                 index,
               );
-              if (
-                dayHours + durationMin / 60 > NINE_HOUR_SOFT_LIMIT &&
-                eAttempt < EMPLOYEE_ATTEMPT_LIMIT - 1
-              )
-                continue;
+
               const validStarts = getConflictFreeStarts(
                 candidateEmployee,
                 windows,
@@ -1665,8 +1652,7 @@ function repairCandidate(
     const emp =
       a.employee_id === null ? undefined : employeeMap.get(a.employee_id);
     const h = (e - s) / 60;
-    if (emp?.max_hours_per_day != null && dayH + h > emp.max_hours_per_day)
-      return false;
+    if (emp && dayH + h > Math.min(emp.max_hours_per_day ?? 9, 9)) return false;
     if (emp?.max_hours_per_week != null && weekH + h > emp.max_hours_per_week)
       return false;
     return true;
@@ -1870,11 +1856,9 @@ function repairCandidate(
       }
 
       if (options.length === 0) {
-        console.log(
-          "repair: no valid spot for",
-          cur.course_code,
-          cur.section_id,
-        );
+        A[i] = { ...cur, employee_id: null };
+        fixed++;
+        i--;
         continue;
       }
       const students = section?.number_of_students ?? 0;
