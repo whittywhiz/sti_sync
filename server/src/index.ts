@@ -13,6 +13,7 @@ import multer from "multer";
 import * as XLSX from "xlsx";
 import type { PoolClient } from "pg";
 import { cacheMiddleware, clearCache } from "./cache";
+import { rateLimit } from "express-rate-limit";
 
 dotenv.config();
 const envSecret = (process.env as any).JWT_SECRET as string | undefined;
@@ -75,9 +76,87 @@ function toHHMM(v: any): string | null {
   return `${String(h).padStart(2, "0")}:${m[2]}`;
 }
 
+const DAY_NAMES: Record<string, string> = {
+  mon: "Monday",
+  tue: "Tuesday",
+  wed: "Wednesday",
+  thu: "Thursday",
+  fri: "Friday",
+  sat: "Saturday",
+  sun: "Sunday",
+};
+
+function parseAvailability(str: any) {
+  const re =
+    /(mon|tue|wed|thu|fri|sat|sun)[a-z]*\s+(\d{1,2})(?::(\d{2}))?\s*(?:-|to)?\s*(\d{1,2})(?::(\d{2}))?/gi;
+  const T = (h: number, m?: string) =>
+    `${String(h < 7 ? h + 12 : h).padStart(2, "0")}:${m ?? "00"}`;
+  const text = String(str ?? "");
+  const all = [...text.matchAll(re)].map((m) => ({
+    day: DAY_NAMES[m[1]!.toLowerCase()]!,
+    start: T(+m[2]!, m[3]),
+    end: T(+m[4]!, m[5]),
+  }));
+  const slots = all.filter(
+    (p) =>
+      p.start < p.end &&
+      +p.start.slice(0, 2) <= 23 &&
+      +p.end.slice(0, 2) <= 23 &&
+      +p.start.slice(3) <= 59 &&
+      +p.end.slice(3) <= 59,
+  );
+  const bad = slots.length < all.length || /\d/.test(text.replace(re, ""));
+  return { slots, bad };
+}
 const PORT = (process.env as any).PORT || 3000;
 
 const app = express();
+
+const apiLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  limit: 1000,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    error: "Too many requests. Please try again later.",
+  },
+});
+
+const loginLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  limit: 3,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    error: "Too many login attempts. Please try again in 5 minutes.",
+  },
+});
+
+// Password reset request limiter
+const resetRequestLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 3,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    error: "Too many password reset requests. Please try again later.",
+  },
+});
+
+// Password reset confirmation limiter
+const resetConfirmLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    error: "Too many verification attempts. Please try again later.",
+  },
+});
 
 app.use(
   cors({
@@ -88,6 +167,13 @@ app.use(
 
 app.use(express.json());
 
+// ADDED: Rate limiting
+app.use(apiLimiter);
+app.use("/login", loginLimiter);
+app.use("/change-password/request", resetRequestLimiter);
+app.use("/change-password/confirm", resetConfirmLimiter);
+
+// EXISTING: Cache invalidation
 app.use((req, res, next) => {
   if (req.method !== "GET") {
     res.on("finish", () => {
@@ -260,7 +346,19 @@ app.post("/employees/import", upload.single("file"), async (req, res) => {
       inserted++;
 
       const slotsByDay = new Map<number, { start: number; end: number }[]>();
-      for (const row of empRows) {
+      const expanded = empRows.flatMap((r) => {
+        if (!r.availability) return [r];
+        const { slots } = parseAvailability(r.availability);
+        return slots.length
+          ? slots.map((x) => ({
+              ...r,
+              availability_day: x.day,
+              availability_start: x.start,
+              availability_end: x.end,
+            }))
+          : [r];
+      });
+      for (const row of expanded) {
         if (
           row.availability_day &&
           row.availability_start &&

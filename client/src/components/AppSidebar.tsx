@@ -41,19 +41,16 @@ const templates = [
   {
     name: "Instructors",
     file: "instructors-template.csv",
-    note: "One row per instructor per available day. Times are 24-hour (08:00).",
+    note: "One row per instructor. Write schedule in availability (e.g. 'monday 8 17 tuesday 9 17').",
     header: [
       "lname",
       "fname",
       "mname",
       "department",
       "position",
-      "username",
       "max_hours_per_day",
       "max_hours_per_week",
-      "availability_day",
-      "availability_start",
-      "availability_end",
+      "availability",
     ],
     sample: [
       "Dela Cruz",
@@ -61,12 +58,31 @@ const templates = [
       "M",
       "IT/ENGG",
       "Instructor",
-      "jdelacruz",
       "8",
       "30",
-      "Monday",
-      "08:00",
-      "17:00",
+      "monday 8 17 tuesday 9 17",
+    ],
+    samples: [
+      [
+        "Dela Cruz",
+        "Juan",
+        "M",
+        "IT/ENGG",
+        "Instructor",
+        "8",
+        "30",
+        "monday 8 17 tuesday 9 17",
+      ],
+      [
+        "Santos",
+        "Maria",
+        "L",
+        "IT/ENGG",
+        "Instructor",
+        "6",
+        "24",
+        "monday 8 12 monday 13 17 wednesday 8:30 17:30",
+      ],
     ],
   },
   {
@@ -93,8 +109,11 @@ const templates = [
 ];
 
 function downloadTemplate(t: (typeof templates)[number]) {
-  const csv = [t.header, t.sample]
-    .map((r) => r.map((c) => `"${c}"`).join(","))
+  const rows = (t as any).samples
+    ? [t.header, ...(t as any).samples]
+    : [t.header, t.sample];
+  const csv = rows
+    .map((r: string[]) => r.map((c) => `"${c}"`).join(","))
     .join("\r\n");
   const url = URL.createObjectURL(
     new Blob(["\ufeff" + csv], { type: "text/csv" }),

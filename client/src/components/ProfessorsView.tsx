@@ -122,7 +122,9 @@ function ProfessorForm({
   );
 
   const [slots, setSlots] = useState<SlotDraft[]>(initial.slots);
-  const [selDayId, setSelDayId] = useState<number>(days[0]?.day_id ?? 1);
+  const [selDays, setSelDays] = useState<number[]>(
+    days.slice(0, 5).map((d) => d.day_id),
+  );
   const [selStart, setSelStart] = useState(7);
   const [selEnd, setSelEnd] = useState(17);
   const [slotError, setSlotError] = useState<string | null>(null);
@@ -157,26 +159,32 @@ function ProfessorForm({
   const dayName = (id: number) => days.find((d) => d.day_id === id)?.name ?? "";
 
   const addSlot = () => {
-    if (selEnd <= selStart) {
-      slotFail("End time must be after start time.");
-      return;
-    }
+    if (selDays.length === 0) return slotFail("Select at least one day.");
+    if (selEnd <= selStart)
+      return slotFail("End time must be after start time.");
 
-    if (
-      slots.some(
-        (s) =>
-          s.day_id === selDayId &&
-          selStart < s.end_hour &&
-          selEnd > s.start_hour,
-      )
-    ) {
-      slotFail("This time overlaps with an existing availability.");
-      return;
-    }
-    setSlotError(null);
+    const toAdd = selDays.filter(
+      (d) =>
+        !slots.some(
+          (s) =>
+            s.day_id === d && selStart < s.end_hour && selEnd > s.start_hour,
+        ),
+    );
+    if (toAdd.length === 0)
+      return slotFail("Those days already have overlapping availability.");
+
+    setSlotError(
+      toAdd.length < selDays.length
+        ? "Skipped days that already overlap."
+        : null,
+    );
     setSlots((s) => [
       ...s,
-      { day_id: selDayId, start_hour: selStart, end_hour: selEnd },
+      ...toAdd.map((day_id) => ({
+        day_id,
+        start_hour: selStart,
+        end_hour: selEnd,
+      })),
     ]);
   };
   const removeSlot = (dayId: number, startHour: number, endHour: number) =>
@@ -321,27 +329,27 @@ function ProfessorForm({
         <p className="text-sm font-medium mb-2">
           Availability <span className="text-destructive">*</span>
         </p>
-        <div className="flex gap-2 items-end flex-wrap">
-          <Select
-            value={String(selDayId)}
-            onValueChange={(value) => setSelDayId(Number(value))}
-          >
-            <SelectTrigger className="w-[150px]">
-              <SelectValue placeholder="Select day" />
-            </SelectTrigger>
-            <SelectContent
-              position="popper"
-              side="bottom"
-              sideOffset={4}
-              avoidCollisions={false}
+        <div className="flex gap-1 flex-wrap mb-2">
+          {days.map((d) => (
+            <Button
+              key={d.day_id}
+              type="button"
+              size="sm"
+              variant={selDays.includes(d.day_id) ? "default" : "outline"}
+              className="h-8 px-3"
+              onClick={() =>
+                setSelDays((s) =>
+                  s.includes(d.day_id)
+                    ? s.filter((x) => x !== d.day_id)
+                    : [...s, d.day_id],
+                )
+              }
             >
-              {days.map((d) => (
-                <SelectItem key={d.day_id} value={String(d.day_id)}>
-                  {d.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+              {SHORT_DAY[d.name] ?? d.name}
+            </Button>
+          ))}
+        </div>
+        <div className="flex gap-2 items-end flex-wrap">
           <div className="flex items-center gap-1">
             <Select
               value={String(selStart)}
@@ -386,6 +394,7 @@ function ProfessorForm({
             </Select>
           </div>
           <Button
+            type="button"
             variant="outline"
             size="sm"
             className="h-[40px] hover:bg-yellow-400"

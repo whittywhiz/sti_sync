@@ -161,12 +161,14 @@ function SectionForm({
           <SelectTrigger className="col-span-2">
             <SelectValue placeholder="Select Program" />
           </SelectTrigger>
-          <SelectContent>
-            {programs.map((p) => (
-              <SelectItem key={p.program_id} value={String(p.program_id)}>
-                {p.description}
-              </SelectItem>
-            ))}
+          <SelectContent className="max-w-[var(--radix-select-trigger-width)]">
+            {[...programs]
+              .sort((a, b) => b.description.length - a.description.length)
+              .map((p) => (
+                <SelectItem key={p.program_id} value={String(p.program_id)}>
+                  {p.description}
+                </SelectItem>
+              ))}
           </SelectContent>
         </Select>
         <Select value={yearLevel} onValueChange={setYearLevel}>

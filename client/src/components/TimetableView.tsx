@@ -675,7 +675,7 @@ export function TimetableView() {
       refreshClasses();
 
       toast.success(
-        `${previous.course_code} moved to${slot.day} · ${formatTime12hr(
+        `${previous.course_code} moved to ${slot.day} · ${formatTime12hr(
           slot.start_time,
         )}–${formatTime12hr(slot.end_time)} · ${slot.room_number}`,
         {
@@ -1034,7 +1034,7 @@ export function TimetableView() {
         </div>
         <div className="flex-1 overflow-y-auto min-h-0">
           <table className="w-full text-sm">
-            <thead className="sticky top-0 bg-white">
+            <thead className="sticky top-0 bg-w`${previous.course_code} moved to${slot.day}hite">
               <tr className="border-b text-left text-xs uppercase text-muted-foreground">
                 <th className="py-2">Year</th>
                 <th>Semester</th>
